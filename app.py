@@ -1,143 +1,140 @@
+"""Streamlit interface for the PDF RAG assistant."""
+
+import hashlib
 import os
 import tempfile
+
 import streamlit as st
-from rag import process_pdf, get_answer
 
-# ── PAGE CONFIG ──────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="PDF RAG Assistant",
-    page_icon="📄",
-    layout="wide"
-)
+from rag import answer_question, process_pdfs
 
-# ── SESSION STATE (Streamlit's memory between reruns) ────────────────
-# Every time user does anything, Streamlit reruns the whole script.
-# session_state variables SURVIVE those reruns — like global variables.
-if "messages" not in st.session_state:
-    st.session_state.messages = []      # chat history
+st.set_page_config(page_title="PDF RAG Assistant", page_icon="📄", layout="wide")
 
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None   # RAG retriever after PDF upload
 
-if "pdf_ready" not in st.session_state:
-    st.session_state.pdf_ready = False  # tracks if PDF is processed
+def initialize_state() -> None:
+    defaults = {
+        "messages": [],
+        "pdf_index": None,
+        "pdf_hash": None,
+        "pdf_names": [],
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-# ── SIDEBAR ──────────────────────────────────────────────────────────
+
+def process_uploads(uploaded_files) -> None:
+    """Process selected uploads together and always remove temporary files."""
+    digest = hashlib.sha256()
+    uploads = []
+    for uploaded_file in uploaded_files:
+        file_bytes = uploaded_file.getvalue()
+        uploads.append((uploaded_file.name, file_bytes))
+        digest.update(len(uploaded_file.name).to_bytes(4, "big"))
+        digest.update(uploaded_file.name.encode("utf-8"))
+        digest.update(len(file_bytes).to_bytes(8, "big"))
+        digest.update(file_bytes)
+    file_hash = digest.hexdigest()
+    if file_hash == st.session_state.pdf_hash:
+        return
+
+    temp_paths = []
+    try:
+        file_specs = []
+        for display_name, file_bytes in uploads:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                temp_file.write(file_bytes)
+                temp_paths.append(temp_file.name)
+                file_specs.append((temp_file.name, display_name))
+        new_index = process_pdfs(file_specs)
+    finally:
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    st.session_state.pdf_index = new_index
+    st.session_state.pdf_hash = file_hash
+    st.session_state.pdf_names = [name for name, _ in uploads]
+    st.session_state.messages = []
+
+
+initialize_state()
+
 with st.sidebar:
     st.title("📄 PDF RAG Assistant")
-    st.caption("Your AI knowledge assistant")
+    st.caption("Answers grounded in your documents")
     st.divider()
 
-    # PDF Upload
-    uploaded_file = st.file_uploader(
-        "Upload your PDF",
-        type=["pdf"],               # only allow PDF files
-        accept_multiple_files=False # one file at a time
+    uploaded_files = st.file_uploader(
+        "Upload one or more PDFs", type=["pdf"], accept_multiple_files=True
     )
+    if uploaded_files:
+        try:
+            with st.spinner(f"Reading and indexing {len(uploaded_files)} PDF(s)..."):
+                process_uploads(uploaded_files)
+        except Exception as error:
+            st.session_state.pdf_index = None
+            st.error(f"Could not process the selected PDFs: {error}")
 
-    if uploaded_file is not None:
-        # Reset if different file uploaded
-        if st.session_state.get("current_pdf") != uploaded_file.name:
-            st.session_state.pdf_ready = False
-            st.session_state.messages = []
-            st.session_state.current_pdf = uploaded_file.name
-
-        if not st.session_state.pdf_ready:
-            with st.spinner("Processing PDF..."):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(uploaded_file.read())
-                    tmp_path = tmp.name
-                st.session_state.retriever = process_pdf(tmp_path)
-                st.session_state.pdf_ready = True
-                os.unlink(tmp_path)
-            st.success("✅ PDF Ready!")
-
-    # Show PDF status
-    if st.session_state.pdf_ready:
-        st.info(f"📄 {uploaded_file.name} loaded")
+    if st.session_state.pdf_index is not None:
+        st.success(f"Ready: {len(st.session_state.pdf_names)} PDF(s)")
+        for pdf_name in st.session_state.pdf_names:
+            st.caption(f"• {pdf_name}")
 
     st.divider()
-
-    # Clear chat button
-    if st.button("🗑️ Clear Chat", use_container_width=True):
+    if st.button("🗑️ Clear chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
-# ── MAIN AREA ────────────────────────────────────────────────────────
 st.title("PDF RAG Assistant")
-st.caption("Ask questions, extract details, or summarize your uploaded PDF.")
+st.caption("Ask detailed questions, compare information, or summarize your PDFs.")
 
-# Show suggestion cards if no messages yet
-if len(st.session_state.messages) == 0:
-    st.write("") # spacing
-    col1, col2 = st.columns(2)
+pdf_ready = st.session_state.pdf_index is not None
+if not pdf_ready:
+    st.info("Upload one or more text-based PDFs in the sidebar to begin.")
 
-    with col1:
-        if st.button("📋 Summarize the document", use_container_width=True):
-            st.session_state.messages.append({
-                "role": "user",
-                "content": "Summarize the document"
-            })
-            st.rerun()
+if not st.session_state.messages:
+    first, second = st.columns(2)
+    suggestions = (
+        (first, "📋 Summarize the document", "Summarize the document"),
+        (first, "📚 Show the main topics", "What are the main topics covered?"),
+        (second, "💡 What are the key takeaways?", "What are the key takeaways?"),
+        (second, "🔎 Explain the core concept", "Explain the core concept of this document"),
+    )
+    for column, label, question in suggestions:
+        with column:
+            if st.button(label, use_container_width=True, disabled=not pdf_ready):
+                st.session_state.messages.append({"role": "user", "content": question})
+                st.rerun()
 
-        if st.button("📚 Show the main topics", use_container_width=True):
-            st.session_state.messages.append({
-                "role": "user",
-                "content": "What are the main topics covered?"
-            })
-            st.rerun()
-
-    with col2:
-        if st.button("💡 What are the key takeaways?", use_container_width=True):
-            st.session_state.messages.append({
-                "role": "user",
-                "content": "What are the key takeaways?"
-            })
-            st.rerun()
-
-        if st.button("🔍 Explain the core concept", use_container_width=True):
-            st.session_state.messages.append({
-                "role": "user",
-                "content": "Explain the core concept of this document"
-            })
-            st.rerun()
-
-# ── DISPLAY CHAT HISTORY ─────────────────────────────────────────────
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message.get("sources"):
+            st.caption("Sources: " + "; ".join(message["sources"]))
 
-# ── HANDLE NEW QUESTION ──────────────────────────────────────────────
-# This handles BOTH typed questions AND suggestion card clicks
-if len(st.session_state.messages) > 0:
-    last_message = st.session_state.messages[-1]
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    question = st.session_state.messages[-1]["content"]
+    history = st.session_state.messages[:-1]
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("Searching the document..."):
+                result = answer_question(question, st.session_state.pdf_index, history)
+            st.markdown(result.text)
+            if result.sources:
+                st.caption("Sources: " + "; ".join(result.sources))
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": result.text,
+                    "pages": result.pages,
+                    "sources": result.sources,
+                }
+            )
+        except Exception as error:
+            st.error(f"I could not answer that question: {error}")
 
-    # If last message is from user and has no answer yet
-    if last_message["role"] == "user":
-        if st.session_state.retriever is None:
-            st.warning("⚠️ Please upload a PDF first!")
-        else:
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    answer = get_answer(
-                        last_message["content"],
-                        st.session_state.retriever
-                    )
-                st.markdown(answer)
-
-            # Save assistant response to history
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": answer
-            })
-
-# ── CHAT INPUT ───────────────────────────────────────────────────────
-user_input = st.chat_input("Ask your PDF anything...")
-
+user_input = st.chat_input("Ask your PDF anything...", disabled=not pdf_ready)
 if user_input:
-    # Add user message to history
-    st.session_state.messages.append({
-        "role": "user",
-        "content": user_input
-    })
+    st.session_state.messages.append({"role": "user", "content": user_input})
     st.rerun()
