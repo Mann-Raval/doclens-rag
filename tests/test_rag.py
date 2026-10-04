@@ -1,9 +1,12 @@
 import unittest
+import os
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from langchain_core.documents import Document
 
-import rag
+from src.pdf_rag import pipeline as rag
 
 
 class FakeChain:
@@ -16,13 +19,29 @@ class FakeChain:
 
 
 class RagTests(unittest.TestCase):
+    def setUp(self):
+        env = patch.dict(os.environ, {"RETRIEVAL_BACKEND": "lexical"})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_included_pdf_can_be_chunked_and_retrieved(self):
-        index = rag.process_pdfs(
-            [
-                ("dl-curriculum.pdf", "curriculum-a.pdf"),
-                ("dl-curriculum.pdf", "curriculum-b.pdf"),
-            ]
-        )
+        from pypdf import PdfWriter
+        from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.pdf"
+            writer = PdfWriter()
+            page = writer.add_blank_page(width=300, height=300)
+            font = DictionaryObject({NameObject('/Type'): NameObject('/Font'),
+                                     NameObject('/Subtype'): NameObject('/Type1'),
+                                     NameObject('/BaseFont'): NameObject('/Helvetica')})
+            page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'):
+                DictionaryObject({NameObject('/F1'): writer._add_object(font)})})
+            stream = DecodedStreamObject()
+            stream.set_data(b'BT /F1 12 Tf 30 200 Td (Neural networks learn from examples.) Tj ET')
+            page[NameObject('/Contents')] = writer._add_object(stream)
+            writer.write(path)
+            index = rag.process_pdfs([(str(path), "curriculum-a.pdf"),
+                                      (str(path), "curriculum-b.pdf")])
 
         self.assertGreater(len(index.chunks), 0)
         self.assertTrue(all("page" in chunk.metadata for chunk in index.chunks))
