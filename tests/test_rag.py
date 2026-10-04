@@ -2,19 +2,8 @@ import unittest
 from unittest.mock import patch
 
 from langchain_core.documents import Document
-from langchain_core.embeddings import DeterministicFakeEmbedding
 
 import rag
-
-
-class FakeVectorStore:
-    def __init__(self, documents):
-        self.documents = documents
-        self.last_query = None
-
-    def max_marginal_relevance_search(self, query, **_kwargs):
-        self.last_query = query
-        return self.documents
 
 
 class FakeChain:
@@ -28,14 +17,12 @@ class FakeChain:
 
 class RagTests(unittest.TestCase):
     def test_included_pdf_can_be_chunked_and_retrieved(self):
-        embedding = DeterministicFakeEmbedding(size=64)
-        with patch.object(rag, "_embeddings", return_value=embedding):
-            index = rag.process_pdfs(
-                [
-                    ("dl-curriculum.pdf", "curriculum-a.pdf"),
-                    ("dl-curriculum.pdf", "curriculum-b.pdf"),
-                ]
-            )
+        index = rag.process_pdfs(
+            [
+                ("dl-curriculum.pdf", "curriculum-a.pdf"),
+                ("dl-curriculum.pdf", "curriculum-b.pdf"),
+            ]
+        )
 
         self.assertGreater(len(index.chunks), 0)
         self.assertTrue(all("page" in chunk.metadata for chunk in index.chunks))
@@ -52,19 +39,118 @@ class RagTests(unittest.TestCase):
                 metadata={"page": 1, "source": "guide.pdf"},
             )
         ]
-        store = FakeVectorStore(documents)
-        index = rag.PdfIndex(vector_store=store, chunks=documents)
+        index = rag.PdfIndex.from_documents(documents)
         chain = FakeChain()
 
         history = [{"role": "user", "content": "Tell me about optimizers"}]
         with patch.object(rag, "_answer_chain", return_value=chain):
             result = rag.answer_question("How does it work?", index, history)
 
-        self.assertIn("optimizers", store.last_query)
+        self.assertIn("optimizers", rag._build_retrieval_query("How does it work?", history))
         self.assertIn("User: Tell me about optimizers", chain.values["history"])
         self.assertIn("[guide.pdf, Page 2]", chain.values["context"])
         self.assertEqual(result.pages, (2,))
-        self.assertEqual(result.sources, ("guide.pdf · page 2",))
+        self.assertEqual(result.sources, ("guide.pdf, pages 2",))
+
+    def test_summary_question_receives_explicit_synthesis_guidance(self):
+        documents = [
+            Document(
+                page_content="The protocol uses collision detection.",
+                metadata={"page": 0, "source": "network.pdf"},
+            )
+        ]
+        index = rag.PdfIndex.from_documents(documents)
+        chain = FakeChain()
+
+        with patch.object(rag, "_answer_chain", return_value=chain):
+            rag.answer_question("What are the key takeaways?", index)
+
+        self.assertIn("synthesis request", chain.values["task_guidance"])
+        self.assertIn("instead of replying that the answer is unknown", chain.values["task_guidance"])
+
+    def test_comparison_question_receives_comparison_specific_guidance(self):
+        documents = [
+            Document(
+                page_content="Ethernet uses frames.",
+                metadata={"page": 0, "source": "ethernet.pdf"},
+            ),
+            Document(
+                page_content="TCP provides reliable transport.",
+                metadata={"page": 0, "source": "tcp.pdf"},
+            ),
+        ]
+        index = rag.PdfIndex.from_documents(documents)
+        chain = FakeChain()
+
+        with patch.object(rag, "_answer_chain", return_value=chain):
+            rag.answer_question(
+                "Compare the uploaded PDFs, explaining their shared ideas and important differences.",
+                index,
+            )
+
+        self.assertEqual(rag._question_mode("Compare the uploaded PDFs"), "comparison")
+        self.assertIn("separate short heading for every PDF", chain.values["task_guidance"])
+        self.assertIn("Do not use a Markdown table", chain.values["task_guidance"])
+        self.assertIn("different scope", chain.values["task_guidance"])
+
+    def test_retry_message_regenerates_previous_comparison(self):
+        documents = [
+            Document(
+                page_content="Ethernet uses frames.",
+                metadata={"page": 0, "source": "ethernet.pdf"},
+            )
+        ]
+        index = rag.PdfIndex.from_documents(documents)
+        chain = FakeChain()
+        history = [
+            {"role": "user", "content": "Compare the uploaded PDFs."},
+            {"role": "assistant", "content": "Incomplete answer"},
+            {"role": "user", "content": "it stopped"},
+            {"role": "assistant", "content": "I don't know"},
+        ]
+
+        with patch.object(rag, "_answer_chain", return_value=chain):
+            rag.answer_question("try again", index, history)
+
+        self.assertEqual(chain.values["question"], "Compare the uploaded PDFs.")
+        self.assertIn("previous response was incomplete", chain.values["task_guidance"])
+
+    def test_every_suggestion_is_detected_as_a_broad_question(self):
+        questions = (
+            "Provide a detailed summary of each uploaded PDF.",
+            "Identify and explain the main topics in each uploaded PDF.",
+            "Derive the most important takeaways from each uploaded PDF.",
+            "Compare the uploaded PDFs and explain their differences.",
+        )
+
+        self.assertTrue(all(rag._is_broad_document_question(q) for q in questions))
+
+    def test_local_retrieval_ranks_relevant_text_without_an_api(self):
+        documents = [
+            Document(page_content="Bananas and mangoes are tropical fruit."),
+            Document(page_content="Gradient descent optimizes a neural network."),
+            Document(page_content="A database stores structured records."),
+        ]
+        index = rag.PdfIndex.from_documents(documents)
+
+        results = index.retrieve("How does gradient descent optimize networks?")
+
+        self.assertEqual(results[0].page_content, documents[1].page_content)
+
+    def test_sources_are_grouped_by_pdf_and_page_range(self):
+        documents = [
+            Document(page_content="A", metadata={"source": "chapter.pdf", "page": 0}),
+            Document(page_content="B", metadata={"source": "chapter.pdf", "page": 1}),
+            Document(page_content="C", metadata={"source": "chapter.pdf", "page": 2}),
+            Document(page_content="D", metadata={"source": "appendix.pdf", "page": 4}),
+        ]
+
+        labels = rag._source_labels(documents)
+
+        self.assertEqual(
+            labels,
+            ("appendix.pdf, pages 5", "chapter.pdf, pages 1-3"),
+        )
 
     def test_summary_sampling_covers_start_and_end(self):
         chunks = [Document(page_content=str(number)) for number in range(100)]

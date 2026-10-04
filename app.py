@@ -8,6 +8,8 @@ import streamlit as st
 
 from rag import answer_question, process_pdfs
 
+MAX_PDFS = 5
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 st.set_page_config(page_title="PDF RAG Assistant", page_icon="📄", layout="wide")
 
 
@@ -23,17 +25,33 @@ def initialize_state() -> None:
             st.session_state[key] = value
 
 
+def render_sources(sources) -> None:
+    """Keep retrieval details available without overwhelming the answer."""
+    if not sources:
+        return
+    with st.expander("View retrieved sources", expanded=False):
+        for source in sources:
+            st.caption(f"• {source}")
+
+
 def process_uploads(uploaded_files) -> None:
     """Process selected uploads together and always remove temporary files."""
+    if len(uploaded_files) > MAX_PDFS:
+        raise ValueError(f"Select at most {MAX_PDFS} PDFs at a time.")
+
     digest = hashlib.sha256()
     uploads = []
+    total_bytes = 0
     for uploaded_file in uploaded_files:
         file_bytes = uploaded_file.getvalue()
+        total_bytes += len(file_bytes)
         uploads.append((uploaded_file.name, file_bytes))
         digest.update(len(uploaded_file.name).to_bytes(4, "big"))
         digest.update(uploaded_file.name.encode("utf-8"))
         digest.update(len(file_bytes).to_bytes(8, "big"))
         digest.update(file_bytes)
+    if total_bytes > MAX_UPLOAD_BYTES:
+        raise ValueError("The PDFs must be 20 MB or less in total.")
     file_hash = digest.hexdigest()
     if file_hash == st.session_state.pdf_hash:
         return
@@ -70,14 +88,25 @@ with st.sidebar:
     )
     if uploaded_files:
         try:
-            with st.spinner(f"Reading and indexing {len(uploaded_files)} PDF(s)..."):
+            with st.spinner(
+                f"Building a local index for {len(uploaded_files)} PDF(s)..."
+            ):
                 process_uploads(uploaded_files)
         except Exception as error:
             st.session_state.pdf_index = None
             st.error(f"Could not process the selected PDFs: {error}")
+    elif st.session_state.pdf_names:
+        st.session_state.pdf_index = None
+        st.session_state.pdf_hash = None
+        st.session_state.pdf_names = []
+        st.session_state.messages = []
 
     if st.session_state.pdf_index is not None:
         st.success(f"Ready: {len(st.session_state.pdf_names)} PDF(s)")
+        chunk_count = len(st.session_state.pdf_index.chunks)
+        st.caption(
+            f"{chunk_count} chunks indexed locally — no embedding API quota used"
+        )
         for pdf_name in st.session_state.pdf_names:
             st.caption(f"• {pdf_name}")
 
@@ -96,10 +125,26 @@ if not pdf_ready:
 if not st.session_state.messages:
     first, second = st.columns(2)
     suggestions = (
-        (first, "📋 Summarize the document", "Summarize the document"),
-        (first, "📚 Show the main topics", "What are the main topics covered?"),
-        (second, "💡 What are the key takeaways?", "What are the key takeaways?"),
-        (second, "🔎 Explain the core concept", "Explain the core concept of this document"),
+        (
+            first,
+            "📋 Summarize all documents",
+            "Provide a detailed summary of each uploaded PDF, followed by a combined overview.",
+        ),
+        (
+            first,
+            "📚 Show the main topics",
+            "Identify and explain the main topics in each uploaded PDF.",
+        ),
+        (
+            second,
+            "💡 What are the key takeaways?",
+            "Derive the most important takeaways from each uploaded PDF and the collection overall.",
+        ),
+        (
+            second,
+            "🔎 Compare the documents",
+            "Compare the uploaded PDFs, explaining their shared ideas and important differences.",
+        ),
     )
     for column, label, question in suggestions:
         with column:
@@ -110,8 +155,12 @@ if not st.session_state.messages:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if message.get("sources"):
-            st.caption("Sources: " + "; ".join(message["sources"]))
+        render_sources(message.get("sources", ()))
+
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
+    if st.button("↻ Regenerate last answer"):
+        st.session_state.messages.pop()
+        st.rerun()
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     question = st.session_state.messages[-1]["content"]
@@ -121,8 +170,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             with st.spinner("Searching the document..."):
                 result = answer_question(question, st.session_state.pdf_index, history)
             st.markdown(result.text)
-            if result.sources:
-                st.caption("Sources: " + "; ".join(result.sources))
+            render_sources(result.sources)
             st.session_state.messages.append(
                 {
                     "role": "assistant",

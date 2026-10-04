@@ -1,7 +1,7 @@
 # PDF RAG Assistant
 
 A small retrieval-augmented generation (RAG) app built with Streamlit,
-LangChain, Chroma, and Gemini. Upload one or more text-based PDFs, ask detailed
+LangChain, local TF-IDF retrieval, and Gemini. Upload one or more text-based PDFs, ask detailed
 questions, compare documents, and get answers grounded in retrieved passages
 with filename-and-page citations.
 
@@ -9,7 +9,7 @@ with filename-and-page citations.
 
 1. `PyPDFLoader` extracts text, filename, and page metadata from every PDF.
 2. A recursive splitter creates overlapping chunks.
-3. Gemini creates embeddings and Chroma indexes them in memory.
+3. A local TF-IDF index represents the chunks without API calls or model downloads.
 4. Maximal marginal relevance retrieval selects relevant, varied chunks.
 5. Gemini answers from those chunks and cites their page markers.
 
@@ -36,4 +36,11 @@ streamlit run app.py
 
 Scanned/image-only PDFs are not supported yet; run OCR on them before upload.
 Changing the selected files rebuilds the in-memory index; ordinary Streamlit
-reruns reuse the existing index and do not embed the PDFs again.
+reruns reuse the existing index. Uploaded temporary files are deleted immediately
+after parsing. Extracted chunks and sparse vectors live only in server RAM and
+are lost when the session or server ends; they are not written to deployment disk.
+
+The app accepts up to five PDFs, 20 MB combined, and 500 pages per session. PDF
+indexing consumes no Gemini quota. Each answered question still makes one Gemini
+generation request, so a public deployment should use billing, authentication,
+and application-level rate limiting rather than depending on a shared free key.
