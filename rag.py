@@ -21,6 +21,7 @@ load_dotenv()
 
 MAX_HISTORY_MESSAGES = 6
 MAX_SUMMARY_CHUNKS = 60
+MAX_COMPARISON_CHUNKS = 24
 RETRIEVAL_CHUNKS = 10
 RETRIEVAL_CANDIDATES = 30
 MAX_TOTAL_PAGES = 500
@@ -169,10 +170,15 @@ def answer_question(
     effective_query, is_retry = _resolve_question(query, full_history)
     retrieval_query = _build_retrieval_query(effective_query, history)
     question_mode = _question_mode(effective_query)
-    documents = pdf_index.retrieve(
-        retrieval_query,
-        broad=question_mode != "specific",
-    )
+    if question_mode == "comparison":
+        documents = _select_broad_chunks(
+            pdf_index.chunks, MAX_COMPARISON_CHUNKS
+        )
+    else:
+        documents = pdf_index.retrieve(
+            retrieval_query,
+            broad=question_mode == "synthesis",
+        )
     if not documents:
         return RagAnswer(
             text="I don't know based on the provided documents.", pages=(), sources=()
@@ -341,6 +347,9 @@ def _is_retry_message(query: str) -> bool:
         "finish the answer",
         "it stopped",
         "it was cut off",
+        "where is the output",
+        "where is the answer",
+        "no output",
         "retry",
         "try again",
         "regenerate",

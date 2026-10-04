@@ -115,6 +115,35 @@ class RagTests(unittest.TestCase):
         self.assertEqual(chain.values["question"], "Compare the uploaded PDFs.")
         self.assertIn("previous response was incomplete", chain.values["task_guidance"])
 
+    def test_missing_output_message_regenerates_previous_question(self):
+        history = [
+            {"role": "user", "content": "Compare the uploaded PDFs."},
+            {"role": "assistant", "content": "Incomplete"},
+        ]
+
+        question, is_retry = rag._resolve_question("where is the output?", history)
+
+        self.assertEqual(question, "Compare the uploaded PDFs.")
+        self.assertTrue(is_retry)
+
+    def test_comparison_context_is_capped_and_balanced(self):
+        chunks = [
+            Document(page_content=f"A{n}", metadata={"source": "a.pdf"})
+            for n in range(50)
+        ] + [
+            Document(page_content=f"B{n}", metadata={"source": "b.pdf"})
+            for n in range(50)
+        ]
+
+        selected = rag._select_broad_chunks(chunks, rag.MAX_COMPARISON_CHUNKS)
+
+        self.assertEqual(len(selected), 24)
+        self.assertEqual(
+            {source: sum(doc.metadata["source"] == source for doc in selected)
+             for source in ("a.pdf", "b.pdf")},
+            {"a.pdf": 12, "b.pdf": 12},
+        )
+
     def test_every_suggestion_is_detected_as_a_broad_question(self):
         questions = (
             "Provide a detailed summary of each uploaded PDF.",

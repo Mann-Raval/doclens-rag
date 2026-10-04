@@ -10,6 +10,7 @@ from rag import answer_question, process_pdfs
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+APP_VERSION = "1.2.0"
 st.set_page_config(page_title="PDF RAG Assistant", page_icon="📄", layout="wide")
 
 
@@ -114,6 +115,7 @@ with st.sidebar:
     if st.button("🗑️ Clear chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
+    st.caption(f"Build {APP_VERSION}")
 
 st.title("PDF RAG Assistant")
 st.caption("Ask detailed questions, compare information, or summarize your PDFs.")
