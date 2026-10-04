@@ -1,76 +1,258 @@
-# DocLens — Document Q&A with RAG
+# DocLens
 
-Status: Basic RAG foundation in progress. See [roadmap](docs/roadmap.md) and
-[architecture](docs/architecture.md). Offline tests verify mechanics; real-document
-answer quality has not yet been established by a benchmark.
+### Document Q&A with local embeddings and cited answers
 
-A small retrieval-augmented generation (RAG) app built with Streamlit,
-LangChain, local MiniLM embeddings, ChromaDB, and Gemini. Upload one or more text-based PDFs, ask detailed
-questions, compare documents, and get answers grounded in retrieved passages
-with filename-and-page citations.
+DocLens is a multi-PDF study assistant built to explore the foundations of
+Retrieval-Augmented Generation (RAG). Upload text-based PDFs, ask questions,
+summarize their contents, and compare documents with inspectable source passages.
 
-## How the pipeline works
+**Status: Stage 1 — Basic RAG foundation in progress.** The pipeline is implemented
+and component checks pass. Evaluation on real documents and Cloud deployment
+validation are still pending. This is a learning and portfolio project, not a
+production-ready service.
 
-1. `PyPDFLoader` extracts text, filename, and page metadata from every PDF.
-2. A recursive splitter creates overlapping chunks.
-3. MiniLM (`all-MiniLM-L6-v2`, ONNX CPU) embeds chunks locally into ChromaDB.
-4. The same model embeds the question; cosine similarity selects relevant chunks.
-5. Gemini answers from those chunks and cites their page markers.
+[Architecture](#architecture) · [Quick start](#quick-start) ·
+[Testing](#testing-and-evaluation) · [Deployment](#deployment) · [Roadmap](#roadmap)
 
-Summary-style questions sample chunks across every PDF rather than only
-retrieving the first few semantic matches. Normal questions use semantic
-retrieval, and the model can produce answers up to
-4,096 tokens. Recent chat messages are supplied so follow-up questions have
-context.
+## What it does
 
-## Run locally
+- Accepts multiple text-based PDFs in one session.
+- Builds semantic embeddings locally, without an embedding API key.
+- Searches a separate Chroma collection for each upload set.
+- Generates answers with filename-and-page citation instructions.
+- Exposes retrieved passages so users can inspect the evidence.
+- Supports summaries, main topics, takeaways, comparisons, and follow-up questions.
+- Retains generation finish reasons and token usage, with a bounded retry for
+  empty or token-limited responses.
+- Includes an optional TF-IDF baseline for retrieval experiments.
 
-```powershell
+## Architecture
+
+DocLens separates document ingestion from question answering. The same embedding
+model encodes both document chunks and search questions.
+
+```mermaid
+flowchart TD
+    subgraph Ingestion
+        A["Upload PDFs"] --> B["Extract text and page metadata"]
+        B --> C["Clean text and preserve line breaks"]
+        C --> D["Split into overlapping chunks"]
+        D --> E["Local MiniLM embeddings"]
+        E --> F[("Session Chroma collection")]
+    end
+
+    subgraph Answering
+        G["Question and recent chat context"] --> H{"Task routing"}
+        H -->|Specific question| I["Embed search query with MiniLM"]
+        I --> J["Cosine similarity search"]
+        F --> J
+        J --> K["Selected passages and source markers"]
+        H -->|Summary or comparison| L["Sample chunks across PDFs"]
+        D --> L
+        L --> K
+        K --> M["Gemini answer generation"]
+        M --> N["Inspect response metadata"]
+        N --> O["Answer, warnings, and source excerpts"]
+    end
+```
+
+**Specific questions** retrieve up to 10 passages through semantic similarity.
+**Summaries and comparisons** currently use balanced sampling across documents,
+capped at 60 and 24 chunks respectively. Sampling is an overview strategy and may
+miss details in long documents.
+
+A token-limit response or an empty response with a STOP/UNKNOWN finish reason
+triggers one application-level retry requesting a shorter answer. Safety-blocked
+responses are not retried. Provider transport retries are separate.
+
+## Technology
+
+| Component | Implementation |
+| --- | --- |
+| Interface | Streamlit |
+| Extraction | PyPDFLoader / pypdf |
+| Chunking | RecursiveCharacterTextSplitter: 1,200 characters, 200 overlap |
+| Embeddings | all-MiniLM-L6-v2 through ONNX Runtime on CPU; 384 dimensions |
+| Vector search | ChromaDB with cosine distance |
+| Generation | Gemini through LangChain; model configurable |
+| Testing | unittest, generated PDF fixture, Chroma integration checks |
+| Automation | GitHub Actions runs the offline test suite |
+
+Local embeddings remove external **embedding** quotas. Answer generation still
+uses the Gemini API and its quotas.
+
+## Quick start
+
+Use Python 3.12 and Git. Internet access is needed to install dependencies,
+download MiniLM on first use, and call Gemini.
+
+### 1. Clone the working branch
+
+```bash
+git clone --branch feat/basic-rag-foundation https://github.com/Mann-Raval/doclens-rag.git
+cd doclens-rag
 python -m venv venv
+```
+
+Activate the environment:
+
+```powershell
+# Windows PowerShell
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 ```
 
-Create `.env` with `GOOGLE_API_KEY=your_key`. Optionally set `GEMINI_CHAT_MODEL`.
-No Groq or embedding API key is required. First indexing downloads the embedding
-model; later requests reuse its disk cache. `RETRIEVAL_BACKEND=lexical` enables
-the old TF-IDF baseline for comparisons or offline tests.
-Then run:
-
-```powershell
-streamlit run app.py
+```bash
+# macOS / Linux
+source venv/bin/activate
 ```
 
-Scanned/image-only PDFs are not supported yet; run OCR on them before upload.
-Changing the selected files rebuilds the in-memory index; ordinary Streamlit
-reruns reuse the existing index. Uploaded temporary files are deleted immediately
-after parsing. Each session owns a unique ephemeral Chroma collection. Replacement
-and removal delete the old collection; abandoned indexes are cleaned when their
-Python objects are collected. No document index survives server restarts.
-Only model weights are cached on disk; uploads may also remain in Streamlit's
-memory while selected. Never commit uploads, API keys, or model weights.
+### 2. Install and configure
 
-The app accepts up to five PDFs, 20 MB combined, and 500 pages per session. PDF
-indexing consumes no Gemini quota. Each answered question still makes one Gemini
-generation request normally, with one bounded retry for empty or token-limited
-responses. A public deployment should use billing, authentication,
-and application-level rate limiting rather than depending on a shared free key.
+```bash
+python -m pip install -r requirements.txt
+```
 
-## Development
+Create a `.env` file in the repository root:
 
-```powershell
+```dotenv
+GOOGLE_API_KEY=your_gemini_api_key
+GEMINI_CHAT_MODEL=gemini-2.5-flash-lite
+RETRIEVAL_BACKEND=semantic
+```
+
+Only the API key is required; the other values are defaults. Set
+`RETRIEVAL_BACKEND=lexical` to run the TF-IDF baseline. No Groq key is needed.
+
+### 3. Run
+
+```bash
+python -m streamlit run app.py
+```
+
+Open the local URL printed in the terminal. Upload PDFs and try:
+
+- “Explain the difference between TCP and UDP using these documents.”
+- “Summarize each uploaded PDF.”
+- “Compare the topics covered by these chapters.”
+
+First indexing takes longer while the embedding model downloads. Subsequent
+indexing uses cached model weights; unchanged uploads reuse the session index.
+
+## Project layout
+
+```text
+doclens-rag/
+├── app.py                     # Streamlit interface
+├── rag.py                     # Compatibility entry point
+├── src/pdf_rag/
+│   ├── config.py              # Pipeline limits
+│   ├── embeddings.py          # Shared local MiniLM model
+│   ├── ingestion.py           # Parsing, chunking, chunk identifiers
+│   ├── retrieval.py           # Chroma search and lexical baseline
+│   ├── generation.py          # Gemini prompt and response metadata
+│   ├── pipeline.py            # Routing, context, retries, evidence
+│   └── schemas.py             # Shared answer structure
+├── tests/                     # Offline unit and integration tests
+├── evaluations/               # Evaluation protocol and semantic smoke check
+├── docs/                      # Architecture, deployment, milestone plan
+├── .github/workflows/         # Automated tests
+├── .streamlit/config.toml     # Upload configuration
+└── requirements.txt
+```
+
+## Storage and data flow
+
+| Data | Where it lives | Lifetime |
+| --- | --- | --- |
+| Uploaded PDF bytes | Streamlit server memory | While retained by the session |
+| Parsing files | Server temporary directory | Removed after processing, including on failure |
+| Text, metadata, and vectors | Session-owned ephemeral Chroma collection and Python objects | Reused within the session; lost on server restart |
+| Embedding model weights | Server model cache on disk | Reused while the cache exists |
+| Conversation | Streamlit session state | Until cleared or the session is discarded |
+
+Replacing or removing PDFs deletes their active collection. Abandoned collections
+are also scheduled for cleanup when the index object is garbage-collected;
+disconnecting a browser does not guarantee immediate deletion.
+
+**Local embeddings do not mean fully local processing:** selected passages and
+recent conversation text are sent to Gemini for answer generation. API keys,
+private uploads, and model weights should not be committed to Git.
+
+## Testing and evaluation
+
+Run the offline checks:
+
+```bash
 python -m unittest discover -s tests -v
 ```
 
-The interface remains in `app.py`. The backend modules are in `src/pdf_rag`;
-`rag.py` preserves the existing public functions. The source panel exposes
-retrieved excerpts, and incomplete model responses show a warning. See
-[evaluation protocol](evaluations/README.md) for the quality checks still required.
+Run a real local-embedding smoke check:
 
-## Streamlit Community Cloud
+```bash
+python -m evaluations.semantic_smoke
+```
 
-Deploy `app.py` from `Mann-Raval/doclens-rag`, branch
-`feat/basic-rag-foundation`, using Python 3.12. Put `GOOGLE_API_KEY` in the app's
-Secrets settings (top-level TOML), not in GitHub. See
-[deployment instructions](docs/deployment.md). FastAPI and a separate frontend
-are deferred to the next phase.
+The second command downloads MiniLM if necessary but makes no Gemini calls.
+
+Verified during development:
+
+- 17 automated tests passed, including generated-PDF ingestion, Chroma collection
+  isolation, retry limits, and response metadata handling.
+- Real MiniLM retrieval matched a question about a “doctor” to a “physician” passage.
+- The Streamlit startup screen rendered successfully.
+
+These checks establish component behavior, **not overall answer accuracy**.
+A reviewed real-document benchmark is still required. See the
+[evaluation protocol](evaluations/README.md).
+
+## Deployment
+
+For Streamlit Community Cloud, select:
+
+| Setting | Value |
+| --- | --- |
+| Repository | Mann-Raval/doclens-rag |
+| Branch | feat/basic-rag-foundation |
+| Entry point | app.py |
+| Python | 3.12 |
+
+Add `GOOGLE_API_KEY` in Streamlit's Secrets settings as a top-level TOML value.
+Do not add the key to GitHub. See the [deployment guide](docs/deployment.md).
+
+Community Cloud has shared resource limits and does not guarantee local-file
+persistence. This design rebuilds indexes after a restart; it does not provide
+permanent document libraries. See the official
+[resource documentation](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app)
+and [storage guidance](https://docs.streamlit.io/develop/concepts/connections/connecting-to-data).
+
+## Current limits
+
+- Up to 5 PDFs, 20 MB combined, and 500 pages per upload set.
+- Text-based PDFs only; OCR and reliable diagram/table extraction are not implemented.
+- Citations are generated by the model; their factual support is not automatically verified.
+- MiniLM's input window can truncate long passages; chunk sizing still needs evaluation.
+- Sampled summaries may omit sections.
+- No user accounts, durable libraries, or application-level per-user rate limiting.
+- Resource and answer-quality checks on Community Cloud are still pending.
+
+## Roadmap
+
+**Stage 1 — Basic RAG**
+
+- [x] Modular ingestion, local embeddings, Chroma retrieval, and generation
+- [x] Multiple PDFs, source excerpts, and generation diagnostics
+- [x] Offline tests and a real semantic retrieval smoke check
+- [ ] Reproduce and resolve incomplete comparisons on real PDFs
+- [ ] Evaluate approximately 30 questions, including unsupported questions
+- [ ] Validate citations, answer completeness, latency, and resource usage
+- [ ] Verify full upload/chat lifecycle and concurrent sessions
+- [ ] Validate deployment, merge the feature branch, and release v1.0
+
+**Later phases**
+
+- Hybrid retrieval and optional reranking, evaluated against the basic baseline.
+- FastAPI backend and a separate frontend.
+- Bounded corrective or agentic workflows where evaluation shows a benefit.
+
+See the [detailed milestone plan](docs/roadmap.md) and
+[architecture notes](docs/architecture.md).
