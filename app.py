@@ -10,8 +10,8 @@ from rag import answer_question, process_pdfs
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.2.0"
-st.set_page_config(page_title="PDF RAG Assistant", page_icon="📄", layout="wide")
+APP_VERSION = "1.3.0"
+st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
 def initialize_state() -> None:
@@ -20,19 +20,23 @@ def initialize_state() -> None:
         "pdf_index": None,
         "pdf_hash": None,
         "pdf_names": [],
+        "answer_error": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
-def render_sources(sources) -> None:
+def render_sources(sources, evidence=()) -> None:
     """Keep retrieval details available without overwhelming the answer."""
     if not sources:
         return
     with st.expander("View retrieved sources", expanded=False):
         for source in sources:
             st.caption(f"• {source}")
+        for item in evidence:
+            st.text(f"{item['source']} — page {item['page']}")
+            st.text(item["text"])
 
 
 def process_uploads(uploaded_files) -> None:
@@ -54,7 +58,7 @@ def process_uploads(uploaded_files) -> None:
     if total_bytes > MAX_UPLOAD_BYTES:
         raise ValueError("The PDFs must be 20 MB or less in total.")
     file_hash = digest.hexdigest()
-    if file_hash == st.session_state.pdf_hash:
+    if file_hash == st.session_state.pdf_hash and st.session_state.pdf_index is not None:
         return
 
     temp_paths = []
@@ -71,16 +75,19 @@ def process_uploads(uploaded_files) -> None:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
+    if st.session_state.pdf_index is not None:
+        st.session_state.pdf_index.close()
     st.session_state.pdf_index = new_index
     st.session_state.pdf_hash = file_hash
     st.session_state.pdf_names = [name for name, _ in uploads]
     st.session_state.messages = []
+    st.session_state.answer_error = None
 
 
 initialize_state()
 
 with st.sidebar:
-    st.title("📄 PDF RAG Assistant")
+    st.title("📄 DocLens")
     st.caption("Answers grounded in your documents")
     st.divider()
 
@@ -94,9 +101,13 @@ with st.sidebar:
             ):
                 process_uploads(uploaded_files)
         except Exception as error:
+            if st.session_state.pdf_index is not None:
+                st.session_state.pdf_index.close()
             st.session_state.pdf_index = None
             st.error(f"Could not process the selected PDFs: {error}")
     elif st.session_state.pdf_names:
+        if st.session_state.pdf_index is not None:
+            st.session_state.pdf_index.close()
         st.session_state.pdf_index = None
         st.session_state.pdf_hash = None
         st.session_state.pdf_names = []
@@ -106,7 +117,7 @@ with st.sidebar:
         st.success(f"Ready: {len(st.session_state.pdf_names)} PDF(s)")
         chunk_count = len(st.session_state.pdf_index.chunks)
         st.caption(
-            f"{chunk_count} chunks indexed locally — no embedding API quota used"
+            f"{chunk_count} passages ready to search"
         )
         for pdf_name in st.session_state.pdf_names:
             st.caption(f"• {pdf_name}")
@@ -114,10 +125,11 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Clear chat", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.answer_error = None
         st.rerun()
     st.caption(f"Build {APP_VERSION}")
 
-st.title("PDF RAG Assistant")
+st.title("DocLens")
 st.caption("Ask detailed questions, compare information, or summarize your PDFs.")
 
 pdf_ready = st.session_state.pdf_index is not None
@@ -152,19 +164,29 @@ if not st.session_state.messages:
         with column:
             if st.button(label, use_container_width=True, disabled=not pdf_ready):
                 st.session_state.messages.append({"role": "user", "content": question})
+                st.session_state.answer_error = None
                 st.rerun()
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        render_sources(message.get("sources", ()))
+        if message.get("warning"):
+            st.warning(message["warning"])
+        render_sources(message.get("sources", ()), message.get("evidence", ()))
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
     if st.button("↻ Regenerate last answer"):
         st.session_state.messages.pop()
+        st.session_state.answer_error = None
         st.rerun()
 
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+if st.session_state.answer_error:
+    st.error(st.session_state.answer_error)
+    if st.button("Retry failed answer"):
+        st.session_state.answer_error = None
+        st.rerun()
+
+if pdf_ready and not st.session_state.answer_error and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     question = st.session_state.messages[-1]["content"]
     history = st.session_state.messages[:-1]
     with st.chat_message("assistant"):
@@ -172,19 +194,27 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             with st.spinner("Searching the document..."):
                 result = answer_question(question, st.session_state.pdf_index, history)
             st.markdown(result.text)
-            render_sources(result.sources)
+            if result.warning:
+                st.warning(result.warning)
+            render_sources(result.sources, result.evidence)
             st.session_state.messages.append(
                 {
                     "role": "assistant",
                     "content": result.text,
                     "pages": result.pages,
                     "sources": result.sources,
+                    "evidence": result.evidence,
+                    "warning": result.warning,
+                    "finish_reason": result.finish_reason,
+                    "usage": result.usage,
                 }
             )
         except Exception as error:
-            st.error(f"I could not answer that question: {error}")
+            st.session_state.answer_error = f"I could not answer that question: {error}"
+            st.rerun()
 
 user_input = st.chat_input("Ask your PDF anything...", disabled=not pdf_ready)
 if user_input:
+    st.session_state.answer_error = None
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.rerun()
