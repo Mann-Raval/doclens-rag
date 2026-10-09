@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from .network_cases import CASES, FOLLOW_UP_HISTORY
 from src.pdf_rag.ingestion import process_pdfs
 from src.pdf_rag.pipeline import answer_question
+from src.pdf_rag.config import DEFAULT_CHAT_MODEL
 
 
 def main():
@@ -24,6 +25,7 @@ def main():
     parser.add_argument("--pdf-dir", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--start", type=int, default=1, help="First one-based case ID; use a separate output file when resuming")
+    parser.add_argument("--cases", type=int, nargs="+", choices=range(1, 31), help="Only run selected case IDs")
     parser.add_argument("--output", type=Path, default=Path("evaluations/local-results/network.json"))
     args = parser.parse_args()
     if not 1 <= args.start <= 30 or not 1 <= args.limit <= 30:
@@ -33,7 +35,7 @@ def main():
     files = sorted(args.pdf_dir.glob("CHAPTER*.pdf"))
     if len(files) != 3:
         parser.error("Expected the three CHAPTER PDFs in --pdf-dir")
-    report = {"model": os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite"),
+    report = {"model": os.getenv("GEMINI_CHAT_MODEL", DEFAULT_CHAT_MODEL),
               "started_utc": datetime.now(timezone.utc).isoformat(), "python": platform.python_version(),
               "code_hashes": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in Path("src/pdf_rag").glob("*.py")},
               "documents": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in files],
@@ -47,6 +49,8 @@ def main():
     try:
         for number, (task, question, expected) in enumerate(CASES[:args.limit], 1):
             if number < args.start:
+                continue
+            if args.cases and number not in args.cases:
                 continue
             history = []
             if number in FOLLOW_UP_HISTORY:

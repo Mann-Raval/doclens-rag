@@ -137,6 +137,7 @@ with st.sidebar:
 
 st.title("DocLens")
 st.caption("Ask detailed questions, compare information, or summarize your PDFs.")
+st.caption("Test version: verify important claims against the source excerpts. Cross-document comparisons can misattribute details.")
 
 pdf_ready = st.session_state.pdf_index is not None
 if not pdf_ready:

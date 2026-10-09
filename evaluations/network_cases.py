@@ -5,7 +5,7 @@ Pages are one-based PDF pages. Course PDFs are intentionally not bundled.
 """
 CASES = [
     ("factual", "List the seven OSI layers in order from lowest to highest.", "All seven, physical through application; chapter 1 pp11-17."),
-    ("factual", "What is the size of a UDP header and what fields does it contain?", "8 bytes; fields are diagram-dependent on chapter 3 p5. If extracted evidence lacks fields, explicitly state this limitation rather than guessing or silently omitting them."),
+    ("factual", "What is the size of a UDP header and what fields does it contain?", "8 bytes (chapter 3 p5); source port, destination port, length, checksum explicitly listed in text on p6. Cite the pages supporting each part."),
     ("factual", "Explain the three steps of the TCP connection handshake.", "SYN, SYN-ACK, ACK; chapter 3 p2."),
     ("factual", "What ports do HTTP and HTTPS use by default?", "80 and 443 respectively; chapter 3 p19."),
     ("factual", "How does Stop-and-Wait flow control work?", "Send one frame, wait for acknowledgement; chapter 3 p11."),
@@ -13,7 +13,7 @@ CASES = [
     ("factual", "What does /24 mean in CIDR notation?", "24 network prefix bits, remaining 8 host bits; chapter 2 p35."),
     ("factual", "What are the control and data connection ports in FTP according to the notes?", "21 control and 20 data, scoped to notes; chapter 3 pp20-21."),
     ("follow-up", "Why does it wait for an acknowledgement?", "Resolve Stop-and-Wait; receiver pacing/reliability; chapter 3 p11."),
-    ("follow-up", "What are its four header fields?", "Resolve UDP. If the diagram fields are absent from extracted text, abstain explicitly; do not fabricate evidence. Chapter 3 p5."),
+    ("follow-up", "What are its four header fields?", "Resolve UDP. Source port, destination port, length, checksum; chapter 3 p6 explicitly lists the fields."),
     ("follow-up", "Which of those two is encrypted?", "Resolve HTTP and HTTPS; HTTPS; chapter 3 p19."),
     ("follow-up", "What does the receiver send in the second step?", "Resolve TCP handshake; SYN-ACK; chapter 3 p2."),
     ("follow-up", "try again", "Regenerate comparison covering all three PDFs, not an unknown response."),

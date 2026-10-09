@@ -10,7 +10,7 @@ Community Cloud is not a managed vector database or durable document library.
 
    ```toml
    GOOGLE_API_KEY = "your-key"
-   GEMINI_CHAT_MODEL = "gemini-2.5-flash-lite"
+   GEMINI_CHAT_MODEL = "gemini-3.5-flash-lite"
    DOCLENS_METRICS = "1"
    ```
 

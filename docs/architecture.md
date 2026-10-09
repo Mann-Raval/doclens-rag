@@ -37,6 +37,12 @@ comparisons use balanced sampling, with document-focused comparison guidance.
 Citation-marker membership is checked and missing/invalid markers are flagged;
 this check does not establish that the cited passage supports the claim.
 
+Generation cites evidence IDs, which code maps to actual filename/page markers.
+Grouped IDs are supported only when every ID is known. Explicit prose-word
+limits override the detailed template and can trigger one bounded shortening
+retry; citations are excluded from the prose count. Unknown references and
+over-limit final answers retain visible warnings.
+
 Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.
 Model output quality still requires evaluation on real PDFs.

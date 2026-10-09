@@ -45,6 +45,12 @@ The runner does not automatically score correctness or citation entailment.
 Follow-up cases provide a previous user question, not a complete live chat;
 multi-turn browser testing remains a separate release check.
 
+Use `--cases 13 16 19 24 25 26` for targeted retests with a new output path.
+`python -m evaluations.recheck_citations INPUT --output OUTPUT` replays only
+deterministic citation formatting against saved evidence, without API calls.
+Neither command establishes claim entailment automatically. See
+[the retest findings](stage1-retest.md) before making release/accuracy claims.
+
 ## Semantic smoke check
 
 Run `python -m evaluations.semantic_smoke` to check real MiniLM + Chroma

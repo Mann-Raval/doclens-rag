@@ -109,3 +109,45 @@ class GenerationTests(unittest.TestCase):
             pipeline.answer_question("Compare TCP and UDP", self.index)
         retrieve.assert_called_once_with("Compare TCP and UDP", broad=False)
         self.assertIn("Compare only the concepts", chain.invoke.call_args.args[0]["task_guidance"])
+
+    def test_explicit_page_lists_normalize_only_with_verified_markers(self):
+        docs = [Document(page_content="Evidence", metadata={"source": "a.pdf", "page": p}) for p in (0, 1)]
+        for marker in ("[a.pdf, Page 1, 2]", "[a.pdf, Page 1, Page 2]"):
+            self.assertEqual(pipeline._normalize_citations(marker, docs), "[a.pdf, Page 1] [a.pdf, Page 2]")
+        for marker in ("[a.pdf, Page 1, 3]", "[other.pdf, Page 1, 2]"):
+            self.assertEqual(pipeline._normalize_citations(marker, docs), marker)
+
+    def test_evidence_ids_map_to_actual_sources_and_unknown_ids_warn(self):
+        self.assertEqual(pipeline._render_evidence_ids("Frames [S1].", self.index.chunks), "Frames [a.pdf, Page 1].")
+        text = pipeline._render_evidence_ids("Unknown [S99].", self.index.chunks)
+        self.assertEqual(text, "Unknown [S99].")
+        self.assertIn("unknown", pipeline._citation_warning(text, self.index.chunks))
+        docs = self.index.chunks + [Document(page_content="Other", metadata={"source": "b.pdf", "page": 4})]
+        self.assertEqual(pipeline._render_evidence_ids("[S1, S2]", docs), "[a.pdf, Page 1] [b.pdf, Page 5]")
+        self.assertEqual(pipeline._render_evidence_ids("[S1, S99]", docs), "[S1, S99]")
+        self.assertIn("unknown", pipeline._citation_warning("[S1, S99]", docs))
+
+    def test_topic_comparison_can_mention_pdfs_without_sampling_all(self):
+        self.assertFalse(pipeline._cross_document_comparison("Compare POP3 and IMAP according to these PDFs."))
+        self.assertFalse(pipeline._cross_document_comparison("Compare TCP and UDP using the uploaded documents."))
+        self.assertTrue(pipeline._cross_document_comparison("Compare all three documents in 200 words."))
+        self.assertTrue(pipeline._cross_document_comparison("Compare chapter 1 with chapter 2."))
+
+    def test_stream_renders_evidence_ids_in_visible_text(self):
+        chain = Mock()
+        chain.stream.return_value = iter([AIMessageChunk(content="Frames [S1].", response_metadata={"finish_reason": "STOP"})])
+        updates = []
+        with patch.object(pipeline, "_answer_chain", return_value=chain):
+            result = pipeline.answer_question("Ethernet?", self.index, on_update=updates.append)
+        self.assertEqual(updates[-1], "Frames [a.pdf, Page 1].")
+        self.assertEqual(result.text, updates[-1])
+        self.assertFalse(result.warning)
+
+    def test_explicit_word_limit_overrides_long_comparison_template(self):
+        chain = Mock()
+        chain.invoke.side_effect = ["word " * 31 + "[S1]", "Short answer [S1]."]
+        with patch.object(pipeline, "_answer_chain", return_value=chain):
+            result = pipeline.answer_question("Compare the PDFs in no more than 30 words.", self.index)
+        self.assertEqual(result.attempts, 2)
+        self.assertIn("at most 30 words", chain.invoke.call_args.args[0]["task_guidance"])
+        self.assertEqual(result.text, "Short answer [a.pdf, Page 1].")

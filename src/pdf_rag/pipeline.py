@@ -38,28 +38,40 @@ def answer_question(
             text="I don't know based on the provided documents.", pages=(), sources=()
         )
 
-    context = "\n\n".join(_format_document(doc) for doc in documents)
+    context = "\n\n".join(f"Evidence [S{i}]\n{_format_document(doc)}" for i, doc in enumerate(documents, 1))
     payload = {
             "context": context,
             "history": history_text or "(none)",
             "task_guidance": _task_guidance(question_mode, is_retry=is_retry) if question_mode != "comparison" or cross_document else (
                 "Compare only the concepts requested, using the relevant excerpts. "
-                "Explain shared properties and differences with exact citations. "
+                "Explain shared properties and differences with evidence-ID citations. "
                 "Do not summarize unrelated PDFs. Respect the requested length."
             ),
             "question": effective_query,
         }
+    limit_match = re.search(r"\b(?:at most|no more than|under|within|in)\s+(\d+)\s+words\b", effective_query, re.I)
+    word_limit = int(limit_match.group(1)) if limit_match else None
+    if word_limit:
+        payload["task_guidance"] = (
+            f"Answer the requested task in at most {word_limit} words of prose. "
+            "This word limit overrides all default detailed-answer templates. "
+            "Use compact paragraphs or bullets, no nested headings. For comparisons, "
+            "briefly cover each requested document plus supported shared ideas and "
+            "differences. Cite evidence IDs. Do not list incidental technical details."
+        )
     chain = _answer_chain()
-    response = _generate(chain, payload, on_update)
+    stream_update = (lambda text: on_update(_render_evidence_ids(text, documents))) if on_update else None
+    response = _generate(chain, payload, stream_update)
     text, reason, usage = response_details(response)
     attempts = 1
     # Retry only a token-limit/empty response, never a safety-blocked response.
-    if reason == "MAX_TOKENS" or (not text and reason in {"STOP", "UNKNOWN"}):
+    too_long = word_limit and _prose_word_count(text) > word_limit
+    if reason == "MAX_TOKENS" or (reason in {"STOP", "UNKNOWN"} and (not text or too_long)):
         attempts = 2
         payload["task_guidance"] += (
-            " Return a complete but shorter answer, at most 500 words."
+            f" Return a complete but shorter answer, at most {word_limit or 500} words."
         )
-        response = _generate(chain, payload, on_update)
+        response = _generate(chain, payload, stream_update)
         text, reason, second_usage = response_details(response)
         usage = {"first_attempt": usage, "second_attempt": second_usage}
     if not text:
@@ -67,8 +79,12 @@ def answer_question(
     warning = ""
     if reason not in {"STOP", "UNKNOWN"}:
         warning = f"The answer may be incomplete. Model finish reason: {reason}."
+    text = _render_evidence_ids(text, documents)
+    text = _normalize_citations(text, documents)
     citation_warning = _citation_warning(text, documents)
     warning = " ".join(part for part in (warning, citation_warning) if part)
+    if word_limit and _prose_word_count(text) > word_limit:
+        warning = (warning + f" The answer exceeds the requested {word_limit}-word limit.").strip()
     pages = tuple(
         sorted(
             {
@@ -106,12 +122,33 @@ def _generate(chain, payload, on_update):
     return response if response is not None else ""
 
 
+def _prose_word_count(text: str) -> int:
+    return len(re.sub(r"\[[^\]\n]*\]", "", text).split())
+
+
 def _cross_document_comparison(query: str) -> bool:
-    return bool(re.search(r"\b(pdfs?|documents?|chapters?|files?)\b", query, re.I))
+    # "Compare TCP and UDP using these PDFs" is a topic comparison.
+    qualifiers = r"(?:(?:all|the|these|those|both|uploaded|selected|three|two|\d+)\s+)*"
+    objects = r"(?:pdfs?|documents?|chapters?|files?)\b"
+    return bool(re.search(r"\b(?:compar\w*\s+|differences?\s+between\s+)" + qualifiers + objects, query, re.I)
+                or re.search(r"\bhow\s+do\s+" + qualifiers + objects + r".*\bdiffer\b", query, re.I))
+
+
+def _render_evidence_ids(text: str, documents: Sequence[Document]) -> str:
+    """Expand known IDs deterministically; retain unknown IDs for warnings."""
+    markers = {str(i): _format_document(doc).split("\n", 1)[0] for i, doc in enumerate(documents, 1)}
+    def render(match):
+        ids = re.findall(r"S(\d+)", match.group(1))
+        if not all(identity in markers for identity in ids):
+            return match.group(0)
+        return " ".join(dict.fromkeys(markers[identity] for identity in ids))
+    return re.sub(r"\[(S\d+(?:,\s*S\d+)*)\]", render, text)
 
 
 def _citation_warning(text: str, documents: Sequence[Document]) -> str:
     """Validate marker membership only; this is NOT claim entailment checking."""
+    if re.search(r"\[S\d+[^\]\n]*\]", text):
+        return "Some evidence IDs are unknown. Verify claims against the retrieved source excerpts."
     valid = {_format_document(doc).split("\n", 1)[0] for doc in documents}
     cited = re.findall(r"\[[^\[\]\n]+,\s*Pages?\b[^\[\]\n]*\]", text, re.I)
     if any(marker not in valid for marker in cited):
@@ -119,6 +156,20 @@ def _citation_warning(text: str, documents: Sequence[Document]) -> str:
     if not cited and "i don't know based on the provided documents" not in text.casefold():
         return "No source citations were provided. Verify claims against the retrieved excerpts."
     return ""
+
+
+def _normalize_citations(text: str, documents: Sequence[Document]) -> str:
+    """Expand explicit page lists only when every referenced page was retrieved.
+
+    This repairs formatting, not attribution: never infer a filename/page,
+    substitute evidence, or imply claim support merely from a valid marker.
+    """
+    valid = {_format_document(doc).split("\n", 1)[0] for doc in documents}
+    def expand(match):
+        source, pages = match.groups()
+        markers = [f"[{source}, Page {page}]" for page in re.findall(r"\d+", pages)]
+        return " ".join(markers) if all(marker in valid for marker in markers) else match.group(0)
+    return re.sub(r"\[([^\[\]\n]+?), Page (\d+(?:,\s*(?:Page\s+)?\d+)+)\]", expand, text)
 
 
 def get_answer(
@@ -193,7 +244,12 @@ def _task_guidance(question_mode: str, *, is_retry: bool = False) -> str:
             "Then add sections for genuine shared ideas, important differences, "
             "and how the documents relate. Do not claim a similarity unless the "
             "context supports it. Cite every document section and major comparison "
-            "with filename-and-page markers."
+            "with evidence-ID citations."
+            " Keep the comparison focused on scope and major concepts rather than "
+            "incidental commands, numbers, or exhaustive topic inventories. A shared "
+            "mechanism must be explicitly supported for EACH document you attribute "
+            "it to; a shared goal does not establish a shared mechanism. Name the "
+            "specific documents that share a property instead of saying 'all' loosely."
             " If the question names a subset of PDFs, discuss only that subset."
             " Respect any requested word limit."
         )
@@ -208,6 +264,10 @@ def _task_guidance(question_mode: str, *, is_retry: bool = False) -> str:
             "differences, or takeaways as appropriate. For a specific chapter or "
             "document request, summarize only the requested material. Respect "
             "requested word and bullet limits."
+            " Preserve distinctions between categories: do not combine differently "
+            "classified protocols or mechanisms into a single class. Keep each "
+            "bullet focused, and check that every attributed property is explicitly "
+            "supported by its own cited excerpt."
         )
         return guidance + retry_guidance
     guidance = (

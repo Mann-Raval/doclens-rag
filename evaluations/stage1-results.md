@@ -1,5 +1,8 @@
 # Stage 1 validation — 2026-10-09
 
+Historical first run. See [the subsequent retest](stage1-retest.md) for the
+completed 30-question runs and correction of the UDP-field assessment below.
+
 **Release decision: HOLD.** Streaming and offline regressions pass. Live
 answer-quality validation is incomplete, and no Cloud deployment has been tested.
 
