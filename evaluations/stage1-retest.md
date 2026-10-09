@@ -93,3 +93,19 @@ These are regression-generation checks, not evidence of perfect citation support
 The screenshot establishes that the app was deployed and used; deployed resource
 measurements, browser isolation testing, and a Cloud retest of build 1.3.1 are
 still pending. Course text and private answer artifacts remain uncommitted.
+
+## Generic table scope correction (build 1.3.2)
+
+The owner's next screenshot showed the explicit three-chapter table working but
+the generic table request still abstaining. Routing checks reproduced a gap:
+format-only follow-ups after collection summaries incorrectly used topic search.
+With no preceding user question, the subject was also left unspecified.
+
+The correction preserves collection scope after summaries/main topics/takeaways,
+defaults subjectless table requests to uploaded PDFs, and keeps explicit topic
+requests topic-scoped. Prior assistant answers are excluded from table prompts.
+38 offline tests pass. Two local live scenarios (following a summary and starting
+with no history) each exercised the generic and explicit requests; all four
+returned STOP, five-line tables covering three chapters, and no marker warnings.
+Their durations were 4.47/3.66 s and 3.36/3.45 s respectively. These checks verify
+table generation and routing, not exhaustive claim support or deployed latency.

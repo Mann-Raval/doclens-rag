@@ -18,6 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdf-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--scenario", choices=("comparison", "summary", "first"), default="comparison")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Choose a new output path; existing reports are preserved")
@@ -26,6 +27,11 @@ def main():
         parser.error("Expected three CHAPTER PDFs")
     index = process_pdfs([(str(path), path.name) for path in files])
     history = [{"role": "user", "content": "Compare the uploaded PDFs, explaining their shared ideas and important differences."}]
+    if args.scenario == "summary":
+        history = [{"role": "user", "content": "Provide a detailed summary of each uploaded PDF, followed by a combined overview."},
+                   {"role": "assistant", "content": "I don't know based on the provided documents."}]
+    elif args.scenario == "first":
+        history = []
     results = []
     try:
         for query in ("make difference table", "make differnce table of 3 chapters"):

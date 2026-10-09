@@ -60,6 +60,9 @@ def answer_question(
             "differences. Cite evidence IDs. Do not list incidental technical details."
         )
     if _requests_table(effective_query):
+        # The subject has already been resolved from user turns. Do not let an
+        # earlier failed assistant answer become a template or evidence.
+        payload["history"] = _format_history([message for message in history if message.get("role") == "user"]) or "(none)"
         payload["task_guidance"] = payload["task_guidance"].replace("Do not use a Markdown table.", "")
         payload["task_guidance"] += (
             " The user's table request overrides the heading-and-bullet template. "
@@ -67,7 +70,9 @@ def answer_question(
             "row, and populated rows, not just an introduction. Use short cells, "
             "cover all requested documents or concepts, and cite evidence IDs in "
             "the relevant cells. For documents, compare their focus, scope, and "
-            "important differences. Do not switch to comparing incidental topics "
+            "important differences. Synthesize the table from the excerpts; the "
+            "PDFs do not need to contain an existing comparison table. Do not "
+            "switch to comparing incidental topics "
             "such as HTTP/HTTPS unless those were requested. Use only the supplied "
             "excerpts as evidence, not previous assistant answers."
         )
@@ -140,6 +145,11 @@ def _prose_word_count(text: str) -> int:
 
 def _cross_document_comparison(query: str) -> bool:
     query = _normalized_question(query)
+    if "requested format:" in query:
+        subject, formatting = query.split("requested format:", 1)
+        collection_scope = re.search(r"\b(?:all|each|uploaded)\b[^.?!]*\b(?:pdfs?|documents?|chapters?)\b|\bcollection\b", subject)
+        if _requests_table(formatting) and _question_mode(subject) == "synthesis" and collection_scope:
+            return True
     # "Compare TCP and UDP using these PDFs" is a topic comparison.
     qualifiers = r"(?:(?:all|the|these|those|both|uploaded|selected|three|two|\d+)\s+)*"
     objects = r"(?:pdfs?|documents?|chapters?|files?)\b"
@@ -324,7 +334,7 @@ def _resolve_question(
             previous = message.get("content", "").strip()
             if message.get("role") == "user" and previous and not _is_retry_message(previous) and not _is_format_followup(previous):
                 return f"{previous}\nRequested format: {query}", False
-        return query, False
+        return f"Compare the uploaded PDFs.\nRequested format: {query}", False
     if not _is_retry_message(query):
         return query, False
 

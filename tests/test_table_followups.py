@@ -6,6 +6,34 @@ from src.pdf_rag.retrieval import PdfIndex
 
 
 class TableFollowupTests(unittest.TestCase):
+    def test_first_question_defaults_to_uploaded_documents(self):
+        query, _ = pipeline._resolve_question("Make difference table", [])
+        self.assertTrue(pipeline._cross_document_comparison(query))
+        self.assertEqual(pipeline._question_mode(query), "comparison")
+
+    def test_collection_summary_followups_keep_broad_scope(self):
+        for previous in (
+            "Provide a detailed summary of each uploaded PDF, followed by a combined overview.",
+            "Identify and explain the main topics in each uploaded PDF.",
+            "Derive the most important takeaways from each uploaded PDF and the collection overall.",
+        ):
+            query, _ = pipeline._resolve_question("Make difference table", [{"role": "user", "content": previous}])
+            self.assertTrue(pipeline._cross_document_comparison(query), previous)
+        query, _ = pipeline._resolve_question("Make difference table", [{"role": "user", "content": "Summarize TCP and UDP."}])
+        self.assertFalse(pipeline._cross_document_comparison(query))
+
+    def test_failed_assistant_history_is_not_used_as_table_template(self):
+        index = PdfIndex.from_documents([Document(page_content="Evidence", metadata={"source": "a.pdf", "page": 0})], backend="lexical")
+        chain = Mock()
+        chain.invoke.return_value = "Answer [S1]"
+        history = [{"role": "user", "content": "Summarize all documents."},
+                   {"role": "assistant", "content": "I don't know based on the provided documents."}]
+        with patch.object(pipeline, "_answer_chain", return_value=chain):
+            pipeline.answer_question("Make difference table", index, history)
+        payload = chain.invoke.call_args.args[0]
+        self.assertNotIn("I don't know", payload["history"])
+        self.assertIn("Summarize all documents", payload["history"])
+
     def test_format_only_retains_prior_subject_and_retry_retains_format(self):
         history = [{"role": "user", "content": "Compare the uploaded PDFs."},
                    {"role": "assistant", "content": "Wrong HTTP answer"}]

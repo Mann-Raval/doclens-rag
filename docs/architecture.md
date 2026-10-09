@@ -48,6 +48,10 @@ substantive user question. Explicitly named new topics take precedence over
 conversation history. Requested tables override the default prose comparison
 layout; common "differnce" spelling is normalized for routing. A retry after
 a formatting follow-up retains both the original subject and requested format.
+Collection-summary follow-ups retain collection-wide retrieval. Without a prior
+subject, a generic table request defaults to the uploaded documents. A prior
+explicit topic (e.g. TCP/UDP) remains topic-scoped. Table prompts exclude prior
+assistant answers to avoid copying earlier failed output as evidence.
 
 Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.
