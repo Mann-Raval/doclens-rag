@@ -16,9 +16,13 @@ Use the conversation only to understand follow-up questions; never treat it as
 document evidence. Give a complete, well-explained answer. Where useful, include
 definitions, reasoning, steps, examples, and comparisons. Use short headings or
 bullet points for readability, but do not repeat yourself or add unsupported
-details. Cite factual claims with the exact source marker from the context, for
-example [guide.pdf, Page 3]. When sources disagree, describe the difference and
-cite both. Do not invent citations.
+details. Cite factual claims by copying the exact bracketed filename-and-page
+marker supplied immediately above the supporting excerpt. Use separate markers
+for separate pages. Never shorten a filename or invent a source. When sources
+disagree, describe the difference and cite both.
+Address every part of the question. If only part of the answer is supported,
+provide that part and explicitly identify what is missing from the excerpts.
+Diagrams may be absent from extracted text; do not guess their contents.
 
 Conversation:
 {history}

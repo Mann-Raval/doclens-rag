@@ -7,8 +7,9 @@ Retrieval-Augmented Generation (RAG). Upload text-based PDFs, ask questions,
 summarize their contents, and compare documents with inspectable source passages.
 
 **Status: Stage 1 — Basic RAG foundation in progress.** The pipeline is implemented
-and component checks pass. Evaluation on real documents and Cloud deployment
-validation are still pending. This is a learning and portfolio project, not a
+and component checks pass. A partial real-PDF evaluation found issues; final
+answer-quality and Cloud validation are still pending. See the
+[validation report](evaluations/stage1-results.md). This is a learning and portfolio project, not a
 production-ready service.
 
 [Architecture](#architecture) · [Quick start](#quick-start) ·
@@ -20,6 +21,7 @@ production-ready service.
 - Builds semantic embeddings locally, without an embedding API key.
 - Searches a separate Chroma collection for each upload set.
 - Generates answers with filename-and-page citation instructions.
+- Streams answers as they arrive; a bounded regeneration replaces truncated output.
 - Exposes retrieved passages so users can inspect the evidence.
 - Supports summaries, main topics, takeaways, comparisons, and follow-up questions.
 - Retains generation finish reasons and token usage, with a bounded retry for
@@ -43,11 +45,11 @@ flowchart TD
 
     subgraph Answering
         G["Question and recent chat context"] --> H{"Task routing"}
-        H -->|Specific question| I["Embed search query with MiniLM"]
+        H -->|Specific question or topic comparison| I["Embed search query with MiniLM"]
         I --> J["Cosine similarity search"]
         F --> J
         J --> K["Selected passages and source markers"]
-        H -->|Summary or comparison| L["Sample chunks across PDFs"]
+        H -->|Summary or document comparison| L["Sample chunks across PDFs"]
         D --> L
         L --> K
         K --> M["Gemini answer generation"]
@@ -56,8 +58,8 @@ flowchart TD
     end
 ```
 
-**Specific questions** retrieve up to 10 passages through semantic similarity.
-**Summaries and comparisons** currently use balanced sampling across documents,
+**Specific questions and topic comparisons** retrieve up to 10 passages through semantic similarity.
+**Summaries and document comparisons** currently use balanced sampling across documents,
 capped at 60 and 24 chunks respectively. Sampling is an overview strategy and may
 miss details in long documents.
 
@@ -196,10 +198,14 @@ The second command downloads MiniLM if necessary but makes no Gemini calls.
 
 Verified during development:
 
-- 17 automated tests passed, including generated-PDF ingestion, Chroma collection
-  isolation, retry limits, and response metadata handling.
+- 26 automated tests passed, including generated-PDF ingestion, Chroma collection
+  isolation, upload/session lifecycle, streaming, retry limits, citation-marker
+  warnings, and response metadata handling.
 - Real MiniLM retrieval matched a question about a “doctor” to a “physician” passage.
 - The Streamlit startup screen rendered successfully.
+- A real-PDF run completed 21 answers before hitting Gemini's daily quota;
+  citation and task-routing issues were found. See the
+  [partial results and release blockers](evaluations/stage1-results.md).
 
 These checks establish component behavior, **not overall answer accuracy**.
 A reviewed real-document benchmark is still required. See the

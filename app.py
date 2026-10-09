@@ -3,10 +3,12 @@
 import hashlib
 import os
 import tempfile
+import time
 
 import streamlit as st
 
 from rag import answer_question, process_pdfs
+from src.pdf_rag.metrics import log_metrics
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -69,7 +71,10 @@ def process_uploads(uploaded_files) -> None:
                 temp_file.write(file_bytes)
                 temp_paths.append(temp_file.name)
                 file_specs.append((temp_file.name, display_name))
+        started = time.perf_counter()
         new_index = process_pdfs(file_specs)
+        log_metrics("index", seconds=round(time.perf_counter() - started, 3),
+                    documents=len(file_specs), chunks=len(new_index.chunks), upload_bytes=total_bytes)
     finally:
         for temp_path in temp_paths:
             if os.path.exists(temp_path):
@@ -112,6 +117,7 @@ with st.sidebar:
         st.session_state.pdf_hash = None
         st.session_state.pdf_names = []
         st.session_state.messages = []
+        st.session_state.answer_error = None
 
     if st.session_state.pdf_index is not None:
         st.success(f"Ready: {len(st.session_state.pdf_names)} PDF(s)")
@@ -190,10 +196,23 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
     question = st.session_state.messages[-1]["content"]
     history = st.session_state.messages[:-1]
     with st.chat_message("assistant"):
+        answer_placeholder = st.empty()
+        started = time.perf_counter()
+        first_text = []
+        def update_answer(text):
+            if text and not first_text:
+                first_text.append(time.perf_counter() - started)
+            answer_placeholder.markdown(text + " ▌" if text else "")
         try:
             with st.spinner("Searching the document..."):
-                result = answer_question(question, st.session_state.pdf_index, history)
-            st.markdown(result.text)
+                result = answer_question(
+                    question, st.session_state.pdf_index, history,
+                    on_update=update_answer,
+                )
+            log_metrics("answer", seconds=round(time.perf_counter() - started, 3),
+                        first_text_seconds=round(first_text[0], 3) if first_text else None,
+                        attempts=result.attempts, finish_reason=result.finish_reason)
+            answer_placeholder.markdown(result.text)
             if result.warning:
                 st.warning(result.warning)
             render_sources(result.sources, result.evidence)
@@ -210,6 +229,9 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
                 }
             )
         except Exception as error:
+            log_metrics("answer_error", seconds=round(time.perf_counter() - started, 3),
+                        error_type=type(error).__name__)
+            answer_placeholder.empty()
             st.session_state.answer_error = f"I could not answer that question: {error}"
             st.rerun()
 
