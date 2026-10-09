@@ -13,6 +13,7 @@ live in `src/pdf_rag`:
 | pipeline | Route question, collect evidence, generate, handle bounded retry |
 | schemas | Answer, evidence, warning and diagnostic fields |
 | metrics | Opt-in content-free timing and process-memory logs |
+| presentation | Safe table cleanup and answer-local numbered citation display |
 
 Indexes are session-scoped ephemeral Chroma collections in server RAM. Temporary parsing files
 are removed after ingestion; Streamlit may retain uploaded bytes while selected.
@@ -52,6 +53,15 @@ Collection-summary follow-ups retain collection-wide retrieval. Without a prior
 subject, a generic table request defaults to the uploaded documents. A prior
 explicit topic (e.g. TCP/UDP) remains topic-scoped. Table prompts exclude prior
 assistant answers to avoid copying earlier failed output as evidence.
+
+Display formatting replaces repeated filename/page citations with compact
+numbers, grouped and deduplicated when adjacent. The source expander maps each
+number back to its full filename/page and flags references absent from retrieved
+evidence. Original text is retained for history and diagnostics. Streaming and
+saved answers use the same formatter; numbers reset for each answer. HTML break
+tags become semicolons inside table rows and paragraph breaks in prose, without
+enabling unsafe HTML. Code fences are preserved. This is presentation cleanup,
+not a claim-support validator.
 
 Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.

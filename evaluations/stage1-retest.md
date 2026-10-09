@@ -109,3 +109,15 @@ with no history) each exercised the generic and explicit requests; all four
 returned STOP, five-line tables covering three chapters, and no marker warnings.
 Their durations were 4.47/3.66 s and 3.36/3.45 s respectively. These checks verify
 table generation and routing, not exhaustive claim support or deployed latency.
+
+## Table readability (build 1.3.3)
+
+Repeated full-filename citations are now displayed as answer-local numbers with
+a complete mapping inside the source expander. Adjacent duplicates are grouped;
+unknown references are retained and labelled rather than silently removed.
+HTML break tags are safely replaced with table-cell separators (or paragraph
+breaks in prose). Original answer text/evidence is unchanged. 44 offline tests
+pass, including streaming and history-rendering integration checks, stable
+numbering, duplicate references, unknown references, and fenced-code preservation.
+No additional Gemini calls were needed for this deterministic UI change.
+The comparison-attribution and deployed resource/session release gates remain open.

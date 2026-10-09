@@ -9,10 +9,11 @@ import streamlit as st
 
 from rag import answer_question, process_pdfs
 from src.pdf_rag.metrics import log_metrics
+from src.pdf_rag.presentation import present_answer
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
@@ -29,11 +30,18 @@ def initialize_state() -> None:
             st.session_state[key] = value
 
 
-def render_sources(sources, evidence=()) -> None:
+def render_sources(sources, evidence=(), references=()) -> None:
     """Keep retrieval details available without overwhelming the answer."""
-    if not sources:
+    if not sources and not references:
         return
     with st.expander("View retrieved sources", expanded=False):
+        if references:
+            st.caption("Numbered references for this answer (numbers do not verify claim accuracy)")
+            known = {f"[{item['source']}, Page {item['page']}]" for item in evidence}
+            for number, marker in enumerate(references, 1):
+                suffix = "" if marker in known else " — not found in retrieved evidence"
+                st.text(f"[{number}] {marker[1:-1]}{suffix}")
+            st.divider()
         for source in sources:
             st.caption(f"• {source}")
         for item in evidence:
@@ -176,10 +184,11 @@ if not st.session_state.messages:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        display, references = present_answer(message["content"]) if message["role"] == "assistant" else (message["content"], [])
+        st.markdown(display)
         if message.get("warning"):
             st.warning(message["warning"])
-        render_sources(message.get("sources", ()), message.get("evidence", ()))
+        render_sources(message.get("sources", ()), message.get("evidence", ()), references)
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
     if st.button("↻ Regenerate last answer"):
@@ -203,7 +212,8 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
         def update_answer(text):
             if text and not first_text:
                 first_text.append(time.perf_counter() - started)
-            answer_placeholder.markdown(text + " ▌" if text else "")
+            display, _ = present_answer(text)
+            answer_placeholder.markdown(display + " ▌" if display else "")
         try:
             with st.spinner("Searching the document..."):
                 result = answer_question(
@@ -213,10 +223,11 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
             log_metrics("answer", seconds=round(time.perf_counter() - started, 3),
                         first_text_seconds=round(first_text[0], 3) if first_text else None,
                         attempts=result.attempts, finish_reason=result.finish_reason)
-            answer_placeholder.markdown(result.text)
+            display, references = present_answer(result.text)
+            answer_placeholder.markdown(display)
             if result.warning:
                 st.warning(result.warning)
-            render_sources(result.sources, result.evidence)
+            render_sources(result.sources, result.evidence, references)
             st.session_state.messages.append(
                 {
                     "role": "assistant",

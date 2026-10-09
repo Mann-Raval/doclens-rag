@@ -24,6 +24,29 @@ def index():
 
 
 class AppLifecycleTests(unittest.TestCase):
+    def test_compact_answer_and_source_legend_preserve_raw_history(self):
+        app = AppTest.from_file("../app.py")
+        uploads = [upload("a.pdf")]
+        build = Mock(return_value=index())
+        self.run_app(app, uploads, build)
+        app.session_state.messages = [{"role": "user", "content": "Make a table"}]
+        raw = "| Topic | Detail |\n| --- | --- |\n| A | First<br>Second [a.pdf, Page 1] |"
+        result = RagAnswer(text=raw, pages=(1,), sources=("a.pdf, pages 1",),
+                           evidence=({"source": "a.pdf", "page": 1, "text": "First Second"},))
+        def generate(*args, **kwargs):
+            kwargs["on_update"](raw)
+            return result
+        with patch("rag.answer_question", side_effect=generate):
+            self.run_app(app, uploads, build)
+        self.assertEqual(app.session_state.messages[-1]["content"], raw)
+        for rerender in (False, True):
+            if rerender:
+                self.run_app(app, uploads, build)
+            visible = "\n".join(item.value for item in app.markdown)
+            self.assertIn("First; Second [1]", visible)
+            self.assertNotIn("<br>", visible)
+            self.assertIn("[1] a.pdf, Page 1", [item.value for item in app.text])
+
     def run_app(self, app, uploads, build):
         with patch("streamlit.file_uploader", return_value=uploads), patch("rag.process_pdfs", build):
             app.run()
