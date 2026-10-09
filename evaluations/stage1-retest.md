@@ -75,3 +75,21 @@ been corrected; the original abstention should not count as a correct answer.
 Private reports and course excerpts remain under ignored
 `evaluations/local-results/`; no keys or source PDFs are published. No release
 or merge is claimed by this report.
+
+## Deployed table-follow-up regression (build 1.3.1)
+
+The owner supplied a Cloud screenshot and transcript showing successful upload
+of three PDFs (184 passages), but "make difference table" switched to HTTP/HTTPS
+and produced only an introduction. "make differnce table of 3 chapters" abstained.
+
+The fix preserves the substantive question for format-only follow-ups, recognizes
+the reported spelling, and permits Markdown tables when explicitly requested.
+35 offline tests pass. A local live two-turn check with the original PDFs returned
+STOP and complete five-line Markdown tables (header, separator, three document
+rows) for both exact inputs: 12.55 s and 9.10 s total. The second answer retained
+an invalid-reference warning; unsupported cross-document generalizations remain.
+These are regression-generation checks, not evidence of perfect citation support.
+
+The screenshot establishes that the app was deployed and used; deployed resource
+measurements, browser isolation testing, and a Cloud retest of build 1.3.1 are
+still pending. Course text and private answer artifacts remain uncommitted.

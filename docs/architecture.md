@@ -43,6 +43,12 @@ limits override the detailed template and can trigger one bounded shortening
 retry; citations are excluded from the prose count. Unknown references and
 over-limit final answers retain visible warnings.
 
+Format-only follow-ups such as "make difference table" retain the last
+substantive user question. Explicitly named new topics take precedence over
+conversation history. Requested tables override the default prose comparison
+layout; common "differnce" spelling is normalized for routing. A retry after
+a formatting follow-up retains both the original subject and requested format.
+
 Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.
 Model output quality still requires evaluation on real PDFs.

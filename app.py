@@ -12,7 +12,7 @@ from src.pdf_rag.metrics import log_metrics
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 

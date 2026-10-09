@@ -59,6 +59,18 @@ def answer_question(
             "briefly cover each requested document plus supported shared ideas and "
             "differences. Cite evidence IDs. Do not list incidental technical details."
         )
+    if _requests_table(effective_query):
+        payload["task_guidance"] = payload["task_guidance"].replace("Do not use a Markdown table.", "")
+        payload["task_guidance"] += (
+            " The user's table request overrides the heading-and-bullet template. "
+            "Return a COMPLETE Markdown comparison table with a header, separator "
+            "row, and populated rows, not just an introduction. Use short cells, "
+            "cover all requested documents or concepts, and cite evidence IDs in "
+            "the relevant cells. For documents, compare their focus, scope, and "
+            "important differences. Do not switch to comparing incidental topics "
+            "such as HTTP/HTTPS unless those were requested. Use only the supplied "
+            "excerpts as evidence, not previous assistant answers."
+        )
     chain = _answer_chain()
     stream_update = (lambda text: on_update(_render_evidence_ids(text, documents))) if on_update else None
     response = _generate(chain, payload, stream_update)
@@ -127,11 +139,13 @@ def _prose_word_count(text: str) -> int:
 
 
 def _cross_document_comparison(query: str) -> bool:
+    query = _normalized_question(query)
     # "Compare TCP and UDP using these PDFs" is a topic comparison.
     qualifiers = r"(?:(?:all|the|these|those|both|uploaded|selected|three|two|\d+)\s+)*"
     objects = r"(?:pdfs?|documents?|chapters?|files?)\b"
     return bool(re.search(r"\b(?:compar\w*\s+|differences?\s+between\s+)" + qualifiers + objects, query, re.I)
-                or re.search(r"\bhow\s+do\s+" + qualifiers + objects + r".*\bdiffer\b", query, re.I))
+                or re.search(r"\bhow\s+do\s+" + qualifiers + objects + r".*\bdiffer\b", query, re.I)
+                or re.search(r"\btable\s+(?:of|for|between|comparing)\s+" + qualifiers + objects, query, re.I))
 
 
 def _render_evidence_ids(text: str, documents: Sequence[Document]) -> str:
@@ -305,15 +319,23 @@ def _resolve_question(
     query: str, messages: Sequence[dict[str, str]]
 ) -> tuple[str, bool]:
     """Map short retry/continue messages back to the last substantive question."""
+    if _is_format_followup(query):
+        for message in reversed(messages):
+            previous = message.get("content", "").strip()
+            if message.get("role") == "user" and previous and not _is_retry_message(previous) and not _is_format_followup(previous):
+                return f"{previous}\nRequested format: {query}", False
+        return query, False
     if not _is_retry_message(query):
         return query, False
 
-    for message in reversed(messages):
+    for position in range(len(messages) - 1, -1, -1):
+        message = messages[position]
         if message.get("role") != "user":
             continue
         previous = message.get("content", "").strip()
         if previous and not _is_retry_message(previous):
-            return previous, True
+            resolved, _ = _resolve_question(previous, messages[:position])
+            return resolved, True
     return query, False
 
 
@@ -335,9 +357,28 @@ def _is_retry_message(query: str) -> bool:
         "regenerate the answer",
     }
     return normalized in retry_phrases
+def _normalized_question(query: str) -> str:
+    normalized = " ".join(query.casefold().split())
+    return re.sub(r"\bdiffernce\b", "difference", normalized)
+
+
+def _is_format_followup(query: str) -> bool:
+    normalized = _normalized_question(query).strip(".!? ")
+    return bool(re.fullmatch(
+        r"(?:please )?(?:(?:make|create|show|give)(?: me)? (?:a |the )?(?:(?:difference|comparison) )?table|"
+        r"(?:put|present|format|convert|turn) (?:it|this|that|the answer|the comparison) (?:in|into|as) (?:a )?table)"
+        r"(?: please)?", normalized))
+
+
+def _requests_table(query: str) -> bool:
+    normalized = _normalized_question(query)
+    return bool(re.search(r"\b(?:make|create|show|give|format|convert|present|put|turn)\b.*\btable\b|"
+                          r"\b(?:in|as)\s+(?:a\s+)?table\b|\b(?:comparison|difference)\s+table\b", normalized))
+
+
 def _question_mode(query: str) -> str:
-    normalized = query.casefold()
-    if "compar" in normalized or "difference between" in normalized:
+    normalized = _normalized_question(query)
+    if "compar" in normalized or "difference" in normalized or (_requests_table(query) and _cross_document_comparison(query)):
         return "comparison"
     phrases = (
         "summarize",
