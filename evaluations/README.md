@@ -23,6 +23,34 @@ Do not commit API keys, private uploads, or copyrighted course PDFs. The unit
 suite creates its own small PDF for ingestion checks; it does not evaluate
 Gemini's answer quality. No model-quality score is claimed yet.
 
+## Networking-chapter regression run
+
+`network_cases.py` defines 30 prompts: 8 factual, 5 follow-up, 5 summary,
+8 comparison, and 4 missing-information questions. It includes the original
+failing comparison prompt and explicit review criteria.
+
+```powershell
+python -m evaluations.run_network --pdf-dir "PATH_TO_CN_FOLDER"
+```
+
+The folder must contain the three `CHAPTER*.pdf` course files. This command
+sends selected passages to Gemini using your configured key and consumes API
+quota. The private JSON report is saved under ignored `evaluations/local-results/`.
+It records document hashes, answers, evidence, finish reasons, attempts, usage,
+indexing time, first-text latency, and total latency. It stops on an API failure.
+Use `--output evaluations/local-results/another-run.json` to retain separate runs.
+Use `--start 22` to begin at case 22 after quota reset; `--limit` sets the last
+case ID (default 30). Existing output files are never overwritten.
+The runner does not automatically score correctness or citation entailment.
+Follow-up cases provide a previous user question, not a complete live chat;
+multi-turn browser testing remains a separate release check.
+
+Use `--cases 13 16 19 24 25 26` for targeted retests with a new output path.
+`python -m evaluations.recheck_citations INPUT --output OUTPUT` replays only
+deterministic citation formatting against saved evidence, without API calls.
+Neither command establishes claim entailment automatically. See
+[the retest findings](stage1-retest.md) before making release/accuracy claims.
+
 ## Semantic smoke check
 
 Run `python -m evaluations.semantic_smoke` to check real MiniLM + Chroma

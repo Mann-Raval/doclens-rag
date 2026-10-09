@@ -3,14 +3,17 @@
 import hashlib
 import os
 import tempfile
+import time
 
 import streamlit as st
 
 from rag import answer_question, process_pdfs
+from src.pdf_rag.metrics import log_metrics
+from src.pdf_rag.presentation import present_answer
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.3"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
@@ -27,11 +30,18 @@ def initialize_state() -> None:
             st.session_state[key] = value
 
 
-def render_sources(sources, evidence=()) -> None:
+def render_sources(sources, evidence=(), references=()) -> None:
     """Keep retrieval details available without overwhelming the answer."""
-    if not sources:
+    if not sources and not references:
         return
     with st.expander("View retrieved sources", expanded=False):
+        if references:
+            st.caption("Numbered references for this answer (numbers do not verify claim accuracy)")
+            known = {f"[{item['source']}, Page {item['page']}]" for item in evidence}
+            for number, marker in enumerate(references, 1):
+                suffix = "" if marker in known else " — not found in retrieved evidence"
+                st.text(f"[{number}] {marker[1:-1]}{suffix}")
+            st.divider()
         for source in sources:
             st.caption(f"• {source}")
         for item in evidence:
@@ -69,7 +79,10 @@ def process_uploads(uploaded_files) -> None:
                 temp_file.write(file_bytes)
                 temp_paths.append(temp_file.name)
                 file_specs.append((temp_file.name, display_name))
+        started = time.perf_counter()
         new_index = process_pdfs(file_specs)
+        log_metrics("index", seconds=round(time.perf_counter() - started, 3),
+                    documents=len(file_specs), chunks=len(new_index.chunks), upload_bytes=total_bytes)
     finally:
         for temp_path in temp_paths:
             if os.path.exists(temp_path):
@@ -112,6 +125,7 @@ with st.sidebar:
         st.session_state.pdf_hash = None
         st.session_state.pdf_names = []
         st.session_state.messages = []
+        st.session_state.answer_error = None
 
     if st.session_state.pdf_index is not None:
         st.success(f"Ready: {len(st.session_state.pdf_names)} PDF(s)")
@@ -131,6 +145,7 @@ with st.sidebar:
 
 st.title("DocLens")
 st.caption("Ask detailed questions, compare information, or summarize your PDFs.")
+st.caption("Test version: verify important claims against the source excerpts. Cross-document comparisons can misattribute details.")
 
 pdf_ready = st.session_state.pdf_index is not None
 if not pdf_ready:
@@ -169,10 +184,11 @@ if not st.session_state.messages:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        display, references = present_answer(message["content"]) if message["role"] == "assistant" else (message["content"], [])
+        st.markdown(display)
         if message.get("warning"):
             st.warning(message["warning"])
-        render_sources(message.get("sources", ()), message.get("evidence", ()))
+        render_sources(message.get("sources", ()), message.get("evidence", ()), references)
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
     if st.button("↻ Regenerate last answer"):
@@ -190,13 +206,28 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
     question = st.session_state.messages[-1]["content"]
     history = st.session_state.messages[:-1]
     with st.chat_message("assistant"):
+        answer_placeholder = st.empty()
+        started = time.perf_counter()
+        first_text = []
+        def update_answer(text):
+            if text and not first_text:
+                first_text.append(time.perf_counter() - started)
+            display, _ = present_answer(text)
+            answer_placeholder.markdown(display + " ▌" if display else "")
         try:
             with st.spinner("Searching the document..."):
-                result = answer_question(question, st.session_state.pdf_index, history)
-            st.markdown(result.text)
+                result = answer_question(
+                    question, st.session_state.pdf_index, history,
+                    on_update=update_answer,
+                )
+            log_metrics("answer", seconds=round(time.perf_counter() - started, 3),
+                        first_text_seconds=round(first_text[0], 3) if first_text else None,
+                        attempts=result.attempts, finish_reason=result.finish_reason)
+            display, references = present_answer(result.text)
+            answer_placeholder.markdown(display)
             if result.warning:
                 st.warning(result.warning)
-            render_sources(result.sources, result.evidence)
+            render_sources(result.sources, result.evidence, references)
             st.session_state.messages.append(
                 {
                     "role": "assistant",
@@ -210,6 +241,9 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
                 }
             )
         except Exception as error:
+            log_metrics("answer_error", seconds=round(time.perf_counter() - started, 3),
+                        error_type=type(error).__name__)
+            answer_placeholder.empty()
             st.session_state.answer_error = f"I could not answer that question: {error}"
             st.rerun()
 

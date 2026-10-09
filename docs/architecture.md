@@ -12,6 +12,8 @@ live in `src/pdf_rag`:
 | generation | Gemini prompt, model creation, response metadata extraction |
 | pipeline | Route question, collect evidence, generate, handle bounded retry |
 | schemas | Answer, evidence, warning and diagnostic fields |
+| metrics | Opt-in content-free timing and process-memory logs |
+| presentation | Safe table cleanup and answer-local numbered citation display |
 
 Indexes are session-scoped ephemeral Chroma collections in server RAM. Temporary parsing files
 are removed after ingestion; Streamlit may retain uploaded bytes while selected.
@@ -27,6 +29,39 @@ responses are not retried. Transport retries inside the provider SDK are separat
 Finish reasons and token usage are retained. A second truncated response is
 displayed with a warning; this is not proof that STOP responses are factually
 complete. The actual retrieved passages are available in the source panel.
+
+Streaming publishes accumulated text snapshots while preserving model metadata.
+A regeneration clears the previous partial display; stream exceptions propagate
+to the explicit retry UI instead of saving partial text as a completed answer.
+Specific questions and topic comparisons use semantic retrieval. Whole-document
+comparisons use balanced sampling, with document-focused comparison guidance.
+Citation-marker membership is checked and missing/invalid markers are flagged;
+this check does not establish that the cited passage supports the claim.
+
+Generation cites evidence IDs, which code maps to actual filename/page markers.
+Grouped IDs are supported only when every ID is known. Explicit prose-word
+limits override the detailed template and can trigger one bounded shortening
+retry; citations are excluded from the prose count. Unknown references and
+over-limit final answers retain visible warnings.
+
+Format-only follow-ups such as "make difference table" retain the last
+substantive user question. Explicitly named new topics take precedence over
+conversation history. Requested tables override the default prose comparison
+layout; common "differnce" spelling is normalized for routing. A retry after
+a formatting follow-up retains both the original subject and requested format.
+Collection-summary follow-ups retain collection-wide retrieval. Without a prior
+subject, a generic table request defaults to the uploaded documents. A prior
+explicit topic (e.g. TCP/UDP) remains topic-scoped. Table prompts exclude prior
+assistant answers to avoid copying earlier failed output as evidence.
+
+Display formatting replaces repeated filename/page citations with compact
+numbers, grouped and deduplicated when adjacent. The source expander maps each
+number back to its full filename/page and flags references absent from retrieved
+evidence. Original text is retained for history and diagnostics. Streaming and
+saved answers use the same formatter; numbers reset for each answer. HTML break
+tags become semicolons inside table rows and paragraph breaks in prose, without
+enabling unsafe HTML. Code fences are preserved. This is presentation cleanup,
+not a claim-support validator.
 
 Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.

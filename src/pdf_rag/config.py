@@ -1,6 +1,8 @@
 """Shared pipeline limits."""
 import re
 
+DEFAULT_CHAT_MODEL = "gemini-3.5-flash-lite"
+
 MAX_HISTORY_MESSAGES = 6
 MAX_SUMMARY_CHUNKS = 60
 MAX_COMPARISON_CHUNKS = 24

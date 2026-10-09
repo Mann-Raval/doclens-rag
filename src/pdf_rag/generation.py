@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from .config import DEFAULT_CHAT_MODEL
 
 load_dotenv()
 
@@ -16,9 +17,16 @@ Use the conversation only to understand follow-up questions; never treat it as
 document evidence. Give a complete, well-explained answer. Where useful, include
 definitions, reasoning, steps, examples, and comparisons. Use short headings or
 bullet points for readability, but do not repeat yourself or add unsupported
-details. Cite factual claims with the exact source marker from the context, for
-example [guide.pdf, Page 3]. When sources disagree, describe the difference and
-cite both. Do not invent citations.
+details. Each excerpt has an evidence ID such as [S1]. Cite factual claims using
+only those exact evidence IDs. Use separate brackets for each ID. The application
+will render IDs as filenames and page numbers; do not write your own filename or
+page citations. Cite every factual bullet and every synthesis paragraph. Cite
+only excerpts that directly support the adjacent claim. Do not generalize a
+property of one protocol or layer to a different protocol or layer. When sources
+disagree, describe the difference and cite both rather than silently choosing one.
+Address every part of the question. If only part of the answer is supported,
+provide that part and explicitly identify what is missing from the excerpts.
+Diagrams may be absent from extracted text; do not guess their contents.
 
 Conversation:
 {history}
@@ -44,8 +52,8 @@ def _require_api_key() -> None:
 def _answer_chain():
     _require_api_key()
     model = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite"),
-        temperature=0.2,
+        model=os.getenv("GEMINI_CHAT_MODEL", DEFAULT_CHAT_MODEL),
+        temperature=None,
         max_output_tokens=4096,
     )
     # Keep the AIMessage so finish reasons and token usage survive generation.
