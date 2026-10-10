@@ -121,3 +121,46 @@ pass, including streaming and history-rendering integration checks, stable
 numbering, duplicate references, unknown references, and fenced-code preservation.
 No additional Gemini calls were needed for this deterministic UI change.
 The comparison-attribution and deployed resource/session release gates remain open.
+
+## Chroma startup hardening (build 1.3.4)
+
+The deployed 1.3.3 screenshot showed a missing `RustBindingsAPI.bindings`
+attribute during upload; retrying via Clear chat succeeded. Clear chat causes
+a rerun, so an absent index is rebuilt. It does not repair the Chroma client.
+
+Client construction now uses a process-wide lock and publishes the singleton
+only after initialization returns. This removes the concurrent cache-miss
+construction risk; the screenshot alone does not establish that race as the
+Cloud failure's root cause. Collections remain session-owned. A dedicated
+Retry PDF processing button avoids using Clear chat as the retry control.
+
+Local verification: 47 tests passed, including concurrent client construction,
+failed-construction retry, and the upload retry button. No paid model calls
+were required. Fresh Cloud startup and concurrent browser-session verification
+are still pending; this is not a v1.0 release sign-off.
+
+## Upload latency and visibility (build 1.3.5)
+
+- Count pages across all selected PDFs before any text extraction or embedding.
+  Oversized textbooks now fail during validation instead of after extracting
+  500 pages. The combined 500-page limit is unchanged.
+- Show extraction and embedding-batch progress, elapsed time at progress updates,
+  and completed indexing duration. First-use model downloads remain possible.
+- Cache upload failures within the session so unrelated reruns do not repeat
+  expensive failed work. Explicit Retry, changed files, or removal permit a new
+  attempt. No document text or embeddings are cached across user sessions.
+- Add opt-in validation, extraction, chunking, embedding/indexing and error
+  timings through the existing privacy-preserving metrics logger.
+
+Measured locally on the three networking PDFs (123 pages, 184 passages):
+validation 0.089 s, extraction 2.693 s, chunking 0.006 s, embedding/indexing
+4.883 s, total 8.132 s. This is a baseline, not a before/after speedup or a
+Streamlit Cloud measurement; the model weights were already downloaded.
+
+An experimental two-thread ONNX setting was slower locally (32-passage batches
+1.308–1.345 s versus 0.815–1.062 s with defaults), so it was NOT enabled in the
+app. The reproducible experiment is `python -m evaluations.embedding_benchmark`.
+No embedding model, chunk coverage or retrieval quality was reduced for speed.
+Valid large-PDF embedding latency on Cloud still needs measurement.
+All 51 regression tests passed, including early combined-page rejection,
+password-protected input, progress, retry caching and upload removal.

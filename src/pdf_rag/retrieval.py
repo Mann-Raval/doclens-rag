@@ -3,13 +3,21 @@ import math
 import os
 import uuid
 import weakref
-from functools import lru_cache
+import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Sequence
+from threading import Lock
+from typing import Callable, Sequence
+
 from langchain_core.documents import Document
+
 from .config import (MAX_SUMMARY_CHUNKS, RETRIEVAL_CHUNKS,
                      RETRIEVAL_CANDIDATES, TOKEN_PATTERN)
+from .metrics import log_metrics
+
+_chroma_client_lock = Lock()
+_shared_chroma_client = None
+
 
 @dataclass
 class PdfIndex:
@@ -22,12 +30,18 @@ class PdfIndex:
     _cleanup: object = None
 
     @classmethod
-    def from_documents(cls, chunks: list[Document], *, backend=None, embedding_function=None) -> "PdfIndex":
+    def from_documents(
+        cls, chunks: list[Document], *, backend=None, embedding_function=None,
+        on_progress: Callable[[str, int, int], None] | None = None,
+    ) -> "PdfIndex":
         backend = backend or os.getenv("RETRIEVAL_BACKEND", "semantic")
         if backend == "semantic":
             if not chunks:
                 raise ValueError("Cannot index an empty document set.")
             from .embeddings import local_embeddings
+            started = time.perf_counter()
+            if on_progress:
+                on_progress("Preparing embedding model (first use may download weights)", 0, len(chunks))
             client = _chroma_client()
             name = f"doclens_{uuid.uuid4().hex}"
             collection = client.create_collection(
@@ -49,9 +63,12 @@ class PdfIndex:
                                     "chunk_id": str(doc.metadata.get("chunk_id", start + i))}
                                    for i, doc in enumerate(batch)],
                     )
+                    if on_progress:
+                        on_progress("Embedding and indexing passages", min(start + 32, len(chunks)), len(chunks))
             except Exception:
                 index.close()
                 raise
+            log_metrics("index_embeddings", seconds=round(time.perf_counter() - started, 3), chunks=len(chunks))
             return index
         if backend != "lexical":
             raise ValueError("RETRIEVAL_BACKEND must be semantic or lexical.")
@@ -84,11 +101,24 @@ class PdfIndex:
             k=min(RETRIEVAL_CHUNKS, len(self.chunks)),
             candidate_count=min(RETRIEVAL_CANDIDATES, len(self.chunks)),
         )
-@lru_cache(maxsize=1)
+
+
 def _chroma_client():
-    import chromadb
-    from chromadb.config import Settings
-    return chromadb.EphemeralClient(settings=Settings(anonymized_telemetry=False))
+    """Publish one fully initialized client, even during concurrent cold starts.
+
+    A cached function alone can execute concurrently on its first cache miss.
+    Chroma's ephemeral system is process-shared, so serialize construction and
+    retain the client for the process lifetime. Sessions delete only collections.
+    """
+    global _shared_chroma_client
+    with _chroma_client_lock:
+        if _shared_chroma_client is None:
+            import chromadb
+            from chromadb.config import Settings
+            _shared_chroma_client = chromadb.EphemeralClient(
+                settings=Settings(anonymized_telemetry=False)
+            )
+        return _shared_chroma_client
 
 
 def _delete_collection(client, name):
