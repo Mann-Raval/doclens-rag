@@ -108,9 +108,9 @@ class RagTests(unittest.TestCase):
             )
 
         self.assertEqual(rag._question_mode("Compare the uploaded PDFs"), "comparison")
-        self.assertIn("separate short heading for every PDF", chain.values["task_guidance"])
-        self.assertIn("Do not use a Markdown table", chain.values["task_guidance"])
-        self.assertIn("different scope", chain.values["task_guidance"])
+        self.assertIn("Copy each quote VERBATIM", chain.values["task_guidance"])
+        self.assertIn("TCP provides reliable transport", chain.values["context"])
+        self.assertNotIn("Ethernet uses frames", chain.values["context"])
 
     def test_retry_message_regenerates_previous_comparison(self):
         documents = [

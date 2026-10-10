@@ -70,5 +70,6 @@ class TableFollowupTests(unittest.TestCase):
             answer = pipeline.answer_question("make differnce table of 3 chapters", index)
         guidance = chain.invoke.call_args.args[0]["task_guidance"]
         self.assertNotIn("Do not use a Markdown table", guidance)
-        self.assertIn("populated rows", guidance)
+        self.assertIn("Copy each quote VERBATIM", guidance)
+        self.assertIn("| Document | Selected evidence |", answer.text)
         self.assertEqual(len(answer.sources), 3)

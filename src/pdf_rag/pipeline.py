@@ -9,6 +9,7 @@ from .retrieval import PdfIndex, _select_broad_chunks, _evenly_spaced_chunks
 from .ingestion import process_pdf, process_pdfs
 from .generation import _answer_chain, response_details
 from .comparisons import is_comparison_inventory, comparison_passages
+from .source_comparison import compare_sources, requested_source_chunks
 
 def answer_question(
     query: str,
@@ -30,7 +31,7 @@ def answer_question(
         documents = comparison_passages(pdf_index.chunks)
     elif cross_document:
         documents = _select_broad_chunks(
-            pdf_index.chunks, MAX_COMPARISON_CHUNKS
+            requested_source_chunks(pdf_index.chunks, effective_query), MAX_COMPARISON_CHUNKS
         )
     else:
         documents = pdf_index.retrieve(
@@ -101,12 +102,21 @@ def answer_question(
             payload["task_guidance"] += f" Keep the response within {word_limit} words."
     chain = _answer_chain()
     stream_update = (lambda text: on_update(_render_evidence_ids(text, documents))) if on_update else None
-    response = _generate(chain, payload, stream_update)
-    text, reason, usage = response_details(response)
-    attempts = 1
+    scoped_comparison = cross_document and not inventory and len({doc.metadata.get("source") for doc in documents}) > 1
+    comparison_warning = ""
+    if scoped_comparison:
+        text, usage, comparison_warning, attempts = compare_sources(
+            chain, documents, payload, table=_requests_table(effective_query),
+            word_limit=word_limit, on_update=stream_update,
+        )
+        reason = "STOP"
+    else:
+        response = _generate(chain, payload, stream_update)
+        text, reason, usage = response_details(response)
+        attempts = 1
     # Retry only a token-limit/empty response, never a safety-blocked response.
     too_long = word_limit and _prose_word_count(text) > word_limit
-    if reason == "MAX_TOKENS" or (reason in {"STOP", "UNKNOWN"} and (not text or too_long)):
+    if not scoped_comparison and (reason == "MAX_TOKENS" or (reason in {"STOP", "UNKNOWN"} and (not text or too_long))):
         attempts = 2
         payload["task_guidance"] += (
             f" Return a complete but shorter answer, at most {word_limit or 500} words."
@@ -116,7 +126,7 @@ def answer_question(
         usage = {"first_attempt": usage, "second_attempt": second_usage}
     if not text:
         raise RuntimeError(f"The model returned no answer (finish reason: {reason}). Retry the question.")
-    warning = ""
+    warning = comparison_warning
     if reason not in {"STOP", "UNKNOWN"}:
         warning = f"The answer may be incomplete. Model finish reason: {reason}."
     text = _render_evidence_ids(text, documents)

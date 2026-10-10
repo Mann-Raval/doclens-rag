@@ -66,3 +66,22 @@ not a claim-support validator.
 Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.
 Model output quality still requires evaluation on real PDFs.
+
+## Source-grounded document comparisons (build 1.3.8)
+
+Multi-document comparison requests use an extractive path. Explicit chapter
+numbers or filenames restrict the selected documents. A separate, bounded model
+call selects short quotes from each file's context. The application checks each
+quote against its evidence ID, source ownership, normalized source text and word
+budget. Invalid selections never become answer claims; direct source sentences
+are the fallback. Provider failures still surface as errors for explicit retry.
+
+The final headings/table are rendered in code. Only validated excerpts stream
+to the UI, one document at a time. There is no free-form synthesis pass that can
+reattribute a fact to another chapter. This costs one call per compared document.
+
+Tradeoff: this is a side-by-side evidence comparison, not an inferred explanation
+of every shared idea or difference. Verbatim excerpts can preserve errors or poor
+PDF extraction in the original notes. Quote validation is not independent fact
+verification. Normal factual questions, summaries and within-document comparison
+inventories retain their existing generative paths and limitations.

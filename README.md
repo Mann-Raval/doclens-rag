@@ -201,7 +201,7 @@ The second command downloads MiniLM if necessary but makes no Gemini calls.
 
 Verified during development:
 
-- 59 automated tests passed, including generated-PDF ingestion, Chroma collection
+- 67 automated tests passed, including generated-PDF ingestion, Chroma collection
   isolation, upload/session lifecycle, streaming, retry limits, citation-marker
   warnings, and response metadata handling.
 - Real MiniLM retrieval matched a question about a “doctor” to a “physician” passage.
