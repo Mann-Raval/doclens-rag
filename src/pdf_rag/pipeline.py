@@ -8,6 +8,7 @@ from .schemas import RagAnswer
 from .retrieval import PdfIndex, _select_broad_chunks, _evenly_spaced_chunks
 from .ingestion import process_pdf, process_pdfs
 from .generation import _answer_chain, response_details
+from .comparisons import is_comparison_inventory, comparison_passages
 
 def answer_question(
     query: str,
@@ -23,8 +24,11 @@ def answer_question(
     effective_query, is_retry = _resolve_question(query, full_history)
     retrieval_query = _build_retrieval_query(effective_query, history)
     question_mode = _question_mode(effective_query)
+    inventory = is_comparison_inventory(effective_query)
     cross_document = question_mode == "comparison" and _cross_document_comparison(effective_query)
-    if cross_document:
+    if inventory:
+        documents = comparison_passages(pdf_index.chunks)
+    elif cross_document:
         documents = _select_broad_chunks(
             pdf_index.chunks, MAX_COMPARISON_CHUNKS
         )
@@ -79,6 +83,22 @@ def answer_question(
             "such as HTTP/HTTPS unless those were requested. Use only the supplied "
             "excerpts as evidence, not previous assistant answers."
         )
+    if inventory:
+        payload["history"] = "(Use the current evidence, not previous assistant answers.)"
+        payload["task_guidance"] = (
+            "Build an exam-revision inventory of distinct concept comparisons WITHIN the notes, "
+            "not a comparison of PDF files. Identify supported pairs or groups throughout the "
+            "supplied excerpts, deduplicate repeated comparisons, and cover each supported pair. "
+            "Do not focus on only the first pair. For each pair give concise, contrasting facts "
+            "with evidence-ID citations. Use a separate compact Markdown table for each pair "
+            "if tables were requested; otherwise use short sections. No HTML or <br> tags. "
+            "Do not invent pairs or fill missing differences from general knowledge. "
+            "Start with a list of the comparison topics you found. This is a heuristic scan "
+            "with bounded excerpts: never claim these are ALL comparisons in the full PDF "
+            "or that the PDF contains no others. State the coverage limitation briefly."
+        )
+        if word_limit:
+            payload["task_guidance"] += f" Keep the response within {word_limit} words."
     chain = _answer_chain()
     stream_update = (lambda text: on_update(_render_evidence_ids(text, documents))) if on_update else None
     response = _generate(chain, payload, stream_update)
@@ -103,6 +123,10 @@ def answer_question(
     text = _normalize_citations(text, documents)
     citation_warning = _citation_warning(text, documents)
     warning = " ".join(part for part in (warning, citation_warning) if part)
+    if inventory:
+        warning = (warning + f" Comparison discovery scanned {len(pdf_index.chunks)} passages and supplied "
+                   f"{len(documents)} to the model. Comparisons without explicit textual cues, including "
+                   "image-only tables, may be missed; this is not a verified exhaustive list.").strip()
     if word_limit and _prose_word_count(text) > word_limit:
         warning = (warning + f" The answer exceeds the requested {word_limit}-word limit.").strip()
     pages = tuple(
@@ -337,6 +361,8 @@ def _resolve_question(
             previous = message.get("content", "").strip()
             if message.get("role") == "user" and previous and not _is_retry_message(previous) and not _is_format_followup(previous):
                 return f"{previous}\nRequested format: {query}", False
+        if is_comparison_inventory(query):
+            return query, False
         return f"Compare the uploaded PDFs.\nRequested format: {query}", False
     if not _is_retry_message(query):
         return query, False
@@ -377,6 +403,8 @@ def _normalized_question(query: str) -> str:
 
 def _is_format_followup(query: str) -> bool:
     normalized = _normalized_question(query).strip(".!? ")
+    if re.fullmatch(r"(?:all |the )?(?:differences?|comparisons?) in (?:a )?table(?: form)?", normalized):
+        return True
     return bool(re.fullmatch(
         r"(?:please )?(?:(?:make|create|show|give)(?: me)? (?:a |the )?(?:(?:difference|comparison) )?table|"
         r"(?:put|present|format|convert|turn) (?:it|this|that|the answer|the comparison) (?:in|into|as) (?:a )?table)"
@@ -386,7 +414,7 @@ def _is_format_followup(query: str) -> bool:
 def _requests_table(query: str) -> bool:
     normalized = _normalized_question(query)
     return bool(re.search(r"\b(?:make|create|show|give|format|convert|present|put|turn)\b.*\btable\b|"
-                          r"\b(?:in|as)\s+(?:a\s+)?table\b|\b(?:comparison|difference)\s+table\b", normalized))
+                          r"\b(?:in|as)\s+(?:a\s+)?table\b|\b(?:comparison|difference)\s+tables?\b", normalized))
 
 
 def _question_mode(query: str) -> str:

@@ -13,7 +13,7 @@ from src.pdf_rag.presentation import present_answer
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.6"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
