@@ -423,6 +423,8 @@ def _normalized_question(query: str) -> str:
 
 def _is_format_followup(query: str) -> bool:
     normalized = _normalized_question(query).strip(".!? ")
+    if re.fullmatch(r"(?:please )?(?:a |the )?(?:(?:difference|comparison) )?table(?: form)?(?: please)?", normalized):
+        return True
     if re.fullmatch(r"(?:all |the )?(?:differences?|comparisons?) in (?:a )?table(?: form)?", normalized):
         return True
     return bool(re.fullmatch(
@@ -433,6 +435,9 @@ def _is_format_followup(query: str) -> bool:
 
 def _requests_table(query: str) -> bool:
     normalized = _normalized_question(query)
+    formatting = normalized.rsplit("requested format:", 1)[-1].strip()
+    if _is_format_followup(formatting):
+        return True
     return bool(re.search(r"\b(?:make|create|show|give|format|convert|present|put|turn)\b.*\btable\b|"
                           r"\b(?:in|as)\s+(?:a\s+)?table\b|\b(?:comparison|difference)\s+tables?\b", normalized))
 

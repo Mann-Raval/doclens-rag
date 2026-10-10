@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import Mock, patch
 from langchain_core.documents import Document
 from src.pdf_rag import pipeline
@@ -6,6 +7,34 @@ from src.pdf_rag.retrieval import PdfIndex
 
 
 class TableFollowupTests(unittest.TestCase):
+    def test_bare_table_requests_keep_chapter_scope(self):
+        history = [{"role": "user", "content": '“Compare chapter 1 with chapter 2” and its table follow-up'}]
+        for followup in ("difference table", "comparison table", "table", "table form", "the table please"):
+            with self.subTest(followup=followup):
+                resolved, _ = pipeline._resolve_question(followup, history)
+                self.assertIn("Compare chapter 1 with chapter 2", resolved)
+                self.assertTrue(pipeline._cross_document_comparison(resolved))
+                self.assertTrue(pipeline._requests_table(resolved))
+        explicit = "difference table between TCP and UDP"
+        self.assertEqual(pipeline._resolve_question(explicit, history), (explicit, False))
+
+    def test_screenshot_followup_uses_validated_table_and_only_two_chapters(self):
+        index = PdfIndex.from_documents([
+            Document(page_content=f"Chapter {i} contains its own evidence.", metadata={"source": f"CHAPTER {i}.pdf", "page": 0})
+            for i in (1, 2, 3)
+        ], backend="lexical")
+        history = [{"role": "user", "content": '“Compare chapter 1 with chapter 2” and its table follow-up'},
+                   {"role": "assistant", "content": "Earlier answer"}]
+        chain = Mock()
+        chain.invoke.side_effect = [json.dumps([{"id": f"S{i}", "quote": f"Chapter {i} contains its own evidence."}]) for i in (1, 2)]
+        with patch.object(pipeline, "_answer_chain", return_value=chain):
+            answer = pipeline.answer_question("difference table", index, history)
+        self.assertEqual(chain.invoke.call_count, 2)
+        self.assertIn("| Document | Selected evidence |", answer.text)
+        self.assertNotIn("CHAPTER 3", answer.text)
+        self.assertEqual(len(answer.sources), 2)
+        self.assertEqual(answer.warning, "")
+
     def test_first_question_defaults_to_uploaded_documents(self):
         query, _ = pipeline._resolve_question("Make difference table", [])
         self.assertTrue(pipeline._cross_document_comparison(query))

@@ -108,3 +108,17 @@ Verification:
 Remaining: accept this conservative output tradeoff, smoke-test the final build
 on Cloud, and verify deployment lifecycle/resource behavior before release.
 No full 30-case live rerun on 1.3.8 or production-level load test is claimed.
+
+## Build 1.3.9: bare table follow-up regression
+
+The deployed screenshot showed that the bare phrase "difference table" bypassed
+format-follow-up resolution, returning to ordinary generation and producing
+invalid citations. The parser now recognizes bare table requests, including
+"comparison table", "table", and "table form", and retains the preceding
+comparison's chapter selection. Explicit new topic requests remain independent.
+
+69 offline tests passed. The exact screenshot sequence is covered end-to-end
+with controlled model selections: only chapter 1 and chapter 2 are supplied,
+the deterministic table renderer is used, and the output citations are valid.
+This fix required no additional live model calls. Old saved answers are not
+rewritten; regenerate or submit a new request to exercise the corrected route.
