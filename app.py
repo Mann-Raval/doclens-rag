@@ -13,7 +13,7 @@ from src.pdf_rag.presentation import present_answer
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.4"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
@@ -118,6 +118,10 @@ with st.sidebar:
                 st.session_state.pdf_index.close()
             st.session_state.pdf_index = None
             st.error(f"Could not process the selected PDFs: {error}")
+            st.caption("You can retry processing without clearing your chat.")
+            # Clicking already reruns the script and retries uploads above.
+            # An additional st.rerun() would process a failure twice per click.
+            st.button("Retry PDF processing")
     elif st.session_state.pdf_names:
         if st.session_state.pdf_index is not None:
             st.session_state.pdf_index.close()

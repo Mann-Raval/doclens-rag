@@ -121,3 +121,20 @@ pass, including streaming and history-rendering integration checks, stable
 numbering, duplicate references, unknown references, and fenced-code preservation.
 No additional Gemini calls were needed for this deterministic UI change.
 The comparison-attribution and deployed resource/session release gates remain open.
+
+## Chroma startup hardening (build 1.3.4)
+
+The deployed 1.3.3 screenshot showed a missing `RustBindingsAPI.bindings`
+attribute during upload; retrying via Clear chat succeeded. Clear chat causes
+a rerun, so an absent index is rebuilt. It does not repair the Chroma client.
+
+Client construction now uses a process-wide lock and publishes the singleton
+only after initialization returns. This removes the concurrent cache-miss
+construction risk; the screenshot alone does not establish that race as the
+Cloud failure's root cause. Collections remain session-owned. A dedicated
+Retry PDF processing button avoids using Clear chat as the retry control.
+
+Local verification: 47 tests passed, including concurrent client construction,
+failed-construction retry, and the upload retry button. No paid model calls
+were required. Fresh Cloud startup and concurrent browser-session verification
+are still pending; this is not a v1.0 release sign-off.

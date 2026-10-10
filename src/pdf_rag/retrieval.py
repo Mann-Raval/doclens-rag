@@ -3,13 +3,19 @@ import math
 import os
 import uuid
 import weakref
-from functools import lru_cache
 from collections import Counter
 from dataclasses import dataclass
+from threading import Lock
 from typing import Sequence
+
 from langchain_core.documents import Document
+
 from .config import (MAX_SUMMARY_CHUNKS, RETRIEVAL_CHUNKS,
                      RETRIEVAL_CANDIDATES, TOKEN_PATTERN)
+
+_chroma_client_lock = Lock()
+_shared_chroma_client = None
+
 
 @dataclass
 class PdfIndex:
@@ -84,11 +90,24 @@ class PdfIndex:
             k=min(RETRIEVAL_CHUNKS, len(self.chunks)),
             candidate_count=min(RETRIEVAL_CANDIDATES, len(self.chunks)),
         )
-@lru_cache(maxsize=1)
+
+
 def _chroma_client():
-    import chromadb
-    from chromadb.config import Settings
-    return chromadb.EphemeralClient(settings=Settings(anonymized_telemetry=False))
+    """Publish one fully initialized client, even during concurrent cold starts.
+
+    A cached function alone can execute concurrently on its first cache miss.
+    Chroma's ephemeral system is process-shared, so serialize construction and
+    retain the client for the process lifetime. Sessions delete only collections.
+    """
+    global _shared_chroma_client
+    with _chroma_client_lock:
+        if _shared_chroma_client is None:
+            import chromadb
+            from chromadb.config import Settings
+            _shared_chroma_client = chromadb.EphemeralClient(
+                settings=Settings(anonymized_telemetry=False)
+            )
+        return _shared_chroma_client
 
 
 def _delete_collection(client, name):
