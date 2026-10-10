@@ -13,7 +13,7 @@ from src.pdf_rag.presentation import present_answer
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.4"
+APP_VERSION = "1.3.5"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
@@ -24,6 +24,9 @@ def initialize_state() -> None:
         "pdf_hash": None,
         "pdf_names": [],
         "answer_error": None,
+        "index_seconds": None,
+        "upload_error_hash": None,
+        "upload_error_message": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -70,8 +73,20 @@ def process_uploads(uploaded_files) -> None:
     file_hash = digest.hexdigest()
     if file_hash == st.session_state.pdf_hash and st.session_state.pdf_index is not None:
         return
+    if file_hash == st.session_state.upload_error_hash:
+        raise ValueError(st.session_state.upload_error_message)
 
     temp_paths = []
+    progress = st.empty()
+    started = time.perf_counter()
+
+    def update_progress(stage, completed, total):
+        elapsed = time.perf_counter() - started
+        progress.progress(
+            completed / max(total, 1),
+            text=f"{stage}: {completed}/{total} · {elapsed:.0f}s elapsed",
+        )
+
     try:
         file_specs = []
         for display_name, file_bytes in uploads:
@@ -79,11 +94,19 @@ def process_uploads(uploaded_files) -> None:
                 temp_file.write(file_bytes)
                 temp_paths.append(temp_file.name)
                 file_specs.append((temp_file.name, display_name))
-        started = time.perf_counter()
-        new_index = process_pdfs(file_specs)
+        new_index = process_pdfs(file_specs, on_progress=update_progress)
+        st.session_state.index_seconds = time.perf_counter() - started
         log_metrics("index", seconds=round(time.perf_counter() - started, 3),
                     documents=len(file_specs), chunks=len(new_index.chunks), upload_bytes=total_bytes)
+    except Exception as error:
+        # Do not repeat expensive failed work on unrelated Streamlit reruns.
+        st.session_state.upload_error_hash = file_hash
+        st.session_state.upload_error_message = str(error)
+        log_metrics("index_error", seconds=round(time.perf_counter() - started, 3),
+                    error_type=type(error).__name__)
+        raise
     finally:
+        progress.empty()
         for temp_path in temp_paths:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
@@ -95,6 +118,13 @@ def process_uploads(uploaded_files) -> None:
     st.session_state.pdf_names = [name for name, _ in uploads]
     st.session_state.messages = []
     st.session_state.answer_error = None
+    reset_upload_error()
+
+
+def reset_upload_error() -> None:
+    """Retry callbacks run before Streamlit re-executes the upload path."""
+    st.session_state.upload_error_hash = None
+    st.session_state.upload_error_message = None
 
 
 initialize_state()
@@ -105,7 +135,8 @@ with st.sidebar:
     st.divider()
 
     uploaded_files = st.file_uploader(
-        "Upload one or more PDFs", type=["pdf"], accept_multiple_files=True
+        "Upload one or more PDFs", type=["pdf"], accept_multiple_files=True,
+        help="Up to 5 text-based PDFs, 20 MB combined and 500 pages combined. Split large textbooks into chapters.",
     )
     if uploaded_files:
         try:
@@ -119,10 +150,8 @@ with st.sidebar:
             st.session_state.pdf_index = None
             st.error(f"Could not process the selected PDFs: {error}")
             st.caption("You can retry processing without clearing your chat.")
-            # Clicking already reruns the script and retries uploads above.
-            # An additional st.rerun() would process a failure twice per click.
-            st.button("Retry PDF processing")
-    elif st.session_state.pdf_names:
+            st.button("Retry PDF processing", on_click=reset_upload_error)
+    elif st.session_state.pdf_names or st.session_state.upload_error_hash:
         if st.session_state.pdf_index is not None:
             st.session_state.pdf_index.close()
         st.session_state.pdf_index = None
@@ -130,6 +159,7 @@ with st.sidebar:
         st.session_state.pdf_names = []
         st.session_state.messages = []
         st.session_state.answer_error = None
+        reset_upload_error()
 
     if st.session_state.pdf_index is not None:
         st.success(f"Ready: {len(st.session_state.pdf_names)} PDF(s)")
@@ -137,6 +167,8 @@ with st.sidebar:
         st.caption(
             f"{chunk_count} passages ready to search"
         )
+        if st.session_state.index_seconds is not None:
+            st.caption(f"Indexed in {st.session_state.index_seconds:.1f}s; reused for follow-up questions.")
         for pdf_name in st.session_state.pdf_names:
             st.caption(f"• {pdf_name}")
 

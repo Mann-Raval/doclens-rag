@@ -2,7 +2,7 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from langchain_core.documents import Document
 from src.pdf_rag.retrieval import PdfIndex
 from src.pdf_rag import retrieval
@@ -63,7 +63,9 @@ class SemanticTests(unittest.TestCase):
 
     def test_similarity_and_collection_isolation(self):
         docs = [Document(page_content='fruit orchard'), Document(page_content='network frames')]
-        first = PdfIndex.from_documents(docs, backend='semantic', embedding_function=TopicEmbeddings())
+        progress = Mock()
+        first = PdfIndex.from_documents(docs, backend='semantic', embedding_function=TopicEmbeddings(), on_progress=progress)
+        progress.assert_any_call("Embedding and indexing passages", 2, 2)
         second = PdfIndex.from_documents([Document(page_content='network private')], backend='semantic', embedding_function=TopicEmbeddings())
         self.addCleanup(first.close)
         self.addCleanup(second.close)

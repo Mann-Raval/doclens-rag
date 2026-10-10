@@ -24,12 +24,24 @@ def index():
 
 
 class AppLifecycleTests(unittest.TestCase):
+    def test_removing_failed_upload_allows_fresh_attempt(self):
+        app = AppTest.from_file("../app.py")
+        uploads = [upload("a.pdf")]
+        self.run_app(app, uploads, Mock(side_effect=ValueError("too many pages")))
+        self.run_app(app, [], Mock())
+        self.assertIsNone(app.session_state.upload_error_hash)
+        build = Mock(return_value=index())
+        self.run_app(app, uploads, build)
+        build.assert_called_once()
+
     def test_upload_failure_offers_retry_without_clear_chat(self):
         app = AppTest.from_file("../app.py")
         uploads = [upload("a.pdf")]
         failure = Mock(side_effect=RuntimeError("startup failed"))
         self.run_app(app, uploads, failure)
         self.assertIsNone(app.session_state.pdf_index)
+        self.run_app(app, uploads, failure)
+        self.assertEqual(failure.call_count, 1)  # Unrelated reruns reuse the error.
         retry = next(button for button in app.button if button.label == "Retry PDF processing")
         retry.click()
         self.run_app(app, uploads, failure)

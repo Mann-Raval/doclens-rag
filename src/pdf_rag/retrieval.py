@@ -3,15 +3,17 @@ import math
 import os
 import uuid
 import weakref
+import time
 from collections import Counter
 from dataclasses import dataclass
 from threading import Lock
-from typing import Sequence
+from typing import Callable, Sequence
 
 from langchain_core.documents import Document
 
 from .config import (MAX_SUMMARY_CHUNKS, RETRIEVAL_CHUNKS,
                      RETRIEVAL_CANDIDATES, TOKEN_PATTERN)
+from .metrics import log_metrics
 
 _chroma_client_lock = Lock()
 _shared_chroma_client = None
@@ -28,12 +30,18 @@ class PdfIndex:
     _cleanup: object = None
 
     @classmethod
-    def from_documents(cls, chunks: list[Document], *, backend=None, embedding_function=None) -> "PdfIndex":
+    def from_documents(
+        cls, chunks: list[Document], *, backend=None, embedding_function=None,
+        on_progress: Callable[[str, int, int], None] | None = None,
+    ) -> "PdfIndex":
         backend = backend or os.getenv("RETRIEVAL_BACKEND", "semantic")
         if backend == "semantic":
             if not chunks:
                 raise ValueError("Cannot index an empty document set.")
             from .embeddings import local_embeddings
+            started = time.perf_counter()
+            if on_progress:
+                on_progress("Preparing embedding model (first use may download weights)", 0, len(chunks))
             client = _chroma_client()
             name = f"doclens_{uuid.uuid4().hex}"
             collection = client.create_collection(
@@ -55,9 +63,12 @@ class PdfIndex:
                                     "chunk_id": str(doc.metadata.get("chunk_id", start + i))}
                                    for i, doc in enumerate(batch)],
                     )
+                    if on_progress:
+                        on_progress("Embedding and indexing passages", min(start + 32, len(chunks)), len(chunks))
             except Exception:
                 index.close()
                 raise
+            log_metrics("index_embeddings", seconds=round(time.perf_counter() - started, 3), chunks=len(chunks))
             return index
         if backend != "lexical":
             raise ValueError("RETRIEVAL_BACKEND must be semantic or lexical.")
