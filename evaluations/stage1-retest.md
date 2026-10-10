@@ -1,6 +1,8 @@
 # Stage 1 retest — 2026-10-09
 
-**Status: ready for a Cloud test deployment, not a v1.0 release.**
+**Status: deployed test candidate; answer-quality gate still blocks v1.0.**
+
+Latest review: [2026-10-10 release checks](release-checks-2026-10-10.md).
 
 ## Executed checks
 

@@ -12,6 +12,9 @@ answer-quality and Cloud validation are still pending. See the
 [validation report](evaluations/stage1-retest.md). This is a learning and portfolio project, not a
 production-ready service.
 
+[Live test app](https://doclens-rag.streamlit.app/) — verify important claims
+against the retrieved excerpts. Do not use this demo for sensitive documents.
+
 [Architecture](#architecture) · [Quick start](#quick-start) ·
 [Testing](#testing-and-evaluation) · [Deployment](#deployment) · [Roadmap](#roadmap)
 
@@ -198,7 +201,7 @@ The second command downloads MiniLM if necessary but makes no Gemini calls.
 
 Verified during development:
 
-- 44 automated tests passed, including generated-PDF ingestion, Chroma collection
+- 59 automated tests passed, including generated-PDF ingestion, Chroma collection
   isolation, upload/session lifecycle, streaming, retry limits, citation-marker
   warnings, and response metadata handling.
 - Real MiniLM retrieval matched a question about a “doctor” to a “physician” passage.

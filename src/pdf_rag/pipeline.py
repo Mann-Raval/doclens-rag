@@ -189,16 +189,26 @@ def _render_evidence_ids(text: str, documents: Sequence[Document]) -> str:
     """Expand known IDs deterministically; retain unknown IDs for warnings."""
     markers = {str(i): _format_document(doc).split("\n", 1)[0] for i, doc in enumerate(documents, 1)}
     def render(match):
-        ids = re.findall(r"S(\d+)", match.group(1))
+        ids = []
+        for group in re.split(r"\s*[,;]\s*", match.group(1)):
+            bounds = re.findall(r"S(\d+)", group)
+            if len(bounds) == 2:
+                first, last = map(int, bounds)
+                if not 1 <= first <= last <= len(documents):
+                    return match.group(0)
+                ids.extend(str(i) for i in range(first, last + 1))
+            else:
+                ids.extend(bounds)
         if not all(identity in markers for identity in ids):
             return match.group(0)
         return " ".join(dict.fromkeys(markers[identity] for identity in ids))
-    return re.sub(r"\[(S\d+(?:,\s*S\d+)*)\]", render, text)
+    identity = r"S\d+(?:\s*[-–]\s*S\d+)?"
+    return re.sub(r"\[\s*(" + identity + r"(?:\s*[,;]\s*" + identity + r")*)\s*\]", render, text)
 
 
 def _citation_warning(text: str, documents: Sequence[Document]) -> str:
     """Validate marker membership only; this is NOT claim entailment checking."""
-    if re.search(r"\[S\d+[^\]\n]*\]", text):
+    if re.search(r"\[\s*S\d+[^\]\n]*\]", text):
         return "Some evidence IDs are unknown. Verify claims against the retrieved source excerpts."
     valid = {_format_document(doc).split("\n", 1)[0] for doc in documents}
     cited = re.findall(r"\[[^\[\]\n]+,\s*Pages?\b[^\[\]\n]*\]", text, re.I)

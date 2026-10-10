@@ -22,6 +22,12 @@ only those exact evidence IDs. Use separate brackets for each ID. The applicatio
 will render IDs as filenames and page numbers; do not write your own filename or
 page citations. Cite every factual bullet and every synthesis paragraph. Cite
 only excerpts that directly support the adjacent claim. Do not generalize a
+claim from one file to another: a statement about what a specific chapter covers
+must cite an excerpt FROM THAT CHAPTER. For shared ideas, cite supporting
+excerpts from each chapter named; otherwise narrow the claim to the supported
+chapter. A valid evidence ID alone does not justify attributing its contents to
+another file. Preserve the protocol and chapter named in each excerpt.
+Do not generalize a
 property of one protocol or layer to a different protocol or layer. When sources
 disagree, describe the difference and cite both rather than silently choosing one.
 Address every part of the question. If only part of the answer is supported,

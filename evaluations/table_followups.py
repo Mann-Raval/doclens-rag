@@ -18,12 +18,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdf-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scenario", choices=("comparison", "summary", "first"), default="comparison")
+    parser.add_argument("--scenario", choices=("comparison", "summary", "first", "inventory"), default="comparison")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Choose a new output path; existing reports are preserved")
-    files = sorted(args.pdf_dir.glob("CHAPTER*.pdf"))
-    if len(files) != 3:
+    files = ([args.pdf_dir / "Operating_System_Notes.pdf"] if args.scenario == "inventory"
+             else sorted(args.pdf_dir.glob("CHAPTER*.pdf")))
+    if args.scenario == "inventory":
+        if not files[0].is_file():
+            parser.error("Expected Operating_System_Notes.pdf")
+    elif len(files) != 3:
         parser.error("Expected three CHAPTER PDFs")
     index = process_pdfs([(str(path), path.name) for path in files])
     history = [{"role": "user", "content": "Compare the uploaded PDFs, explaining their shared ideas and important differences."}]
@@ -32,9 +36,13 @@ def main():
                    {"role": "assistant", "content": "I don't know based on the provided documents."}]
     elif args.scenario == "first":
         history = []
+    queries = ("make difference table", "make differnce table of 3 chapters")
+    if args.scenario == "inventory":
+        history = []
+        queries = ("give me all differences in notes so that i can learn for exam", "all differences in table form")
     results = []
     try:
-        for query in ("make difference table", "make differnce table of 3 chapters"):
+        for query in queries:
             started = time.perf_counter()
             answer = answer_question(query, index, history, on_update=lambda text: None)
             lines = [line for line in answer.text.splitlines() if line.strip().startswith("|")]

@@ -1,5 +1,7 @@
 # Deploy DocLens
 
+Current user-confirmed test deployment: https://doclens-rag.streamlit.app/
+
 Community Cloud hosts the Streamlit application. Chroma runs inside that app;
 Community Cloud is not a managed vector database or durable document library.
 
