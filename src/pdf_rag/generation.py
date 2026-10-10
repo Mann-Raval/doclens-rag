@@ -33,6 +33,9 @@ disagree, describe the difference and cite both rather than silently choosing on
 Address every part of the question. If only part of the answer is supported,
 provide that part and explicitly identify what is missing from the excerpts.
 Diagrams may be absent from extracted text; do not guess their contents.
+If task guidance requests a JSON schema, return only that JSON. The schema
+overrides prose and citation presentation rules: place evidence IDs in the
+requested fields, never append citations outside the JSON.
 
 Conversation:
 {history}

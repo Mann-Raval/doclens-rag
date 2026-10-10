@@ -67,21 +67,23 @@ Known limitations: sparse sampling for summaries; no OCR;
 no entailment verification of citations; no authentication or production quotas.
 Model output quality still requires evaluation on real PDFs.
 
-## Source-grounded document comparisons (build 1.3.8)
+## Feature-aligned document comparisons (build 1.3.10)
 
-Multi-document comparison requests use an extractive path. Explicit chapter
-numbers or filenames restrict the selected documents. A separate, bounded model
-call selects short quotes from each file's context. The application checks each
-quote against its evidence ID, source ownership, normalized source text and word
-budget. Invalid selections never become answer claims; direct source sentences
-are the fallback. Provider failures still surface as errors for explicit retry.
+Explicit filenames/chapter numbers restrict the source set. Each file receives
+one isolated model call producing JSON cells for shared features: main focus,
+key concepts, mechanisms/methods, and examples. Short word-limited requests use
+two rows. Cells contain concise paraphrases and evidence IDs, not pasted quotes.
 
-The final headings/table are rendered in code. Only validated excerpts stream
-to the UI, one document at a time. There is no free-form synthesis pass that can
-reattribute a fact to another chapter. This costs one call per compared document.
+The application validates schema, word bounds, feature labels, and ownership of
+every cited ID before rendering columns per document and rows per feature. IDs
+from another file are rejected. A missing cell says its content was not established
+by retrieved evidence; this is not a claim that the PDF lacks the topic. Formatting
+follow-ups retain source scope. Output is published after the source calls finish;
+unvalidated intermediate JSON is never streamed into the answer.
 
-Tradeoff: this is a side-by-side evidence comparison, not an inferred explanation
-of every shared idea or difference. Verbatim excerpts can preserve errors or poor
-PDF extraction in the original notes. Quote validation is not independent fact
-verification. Normal factual questions, summaries and within-document comparison
-inventories retain their existing generative paths and limitations.
+An experimental second LLM review rejected useful content, was inconsistent,
+and added latency; it is not shipped. This path validates reference membership,
+NOT semantic entailment or factual truth. Generated paraphrases can still be
+incorrect or incompletely supported, and source notes may themselves be wrong.
+The quote-dump fallback from 1.3.8/1.3.9 has been removed. Other question routes
+retain their existing behaviour and limitations.

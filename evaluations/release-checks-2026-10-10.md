@@ -122,3 +122,41 @@ with controlled model selections: only chapter 1 and chapter 2 are supplied,
 the deterministic table renderer is used, and the output citations are valid.
 This fix required no additional live model calls. Old saved answers are not
 rewritten; regenerate or submit a new request to exercise the corrected route.
+
+## Build 1.3.10: readable, feature-aligned comparisons
+
+The quote-only output failed the user's usefulness check. It has been replaced
+with concise paraphrased cells, aligned across Main focus, Key concepts,
+Mechanisms and methods, and Examples. Explicit short word limits use two rows.
+Each document is generated from its own evidence only; the application enforces
+cell schema, word bounds and reference ownership, then renders the table/prose.
+Bare table follow-ups and chapter filtering are preserved, including "chapters
+1 and 2". The old direct-quote fallback has been removed.
+
+An experimental quote-plus-LLM-review path produced empty/over-rejected cells and
+high latency. It was NOT shipped. Inspection found conflicting JSON presentation
+instructions and misplaced review evidence; even after correction the extra
+review was not reliable enough to justify its cost. No semantic-entailment
+guarantee is claimed for the simpler shipped source-isolation checks.
+
+Final local observations:
+
+- 70 automated tests passed, including aligned output, source ownership, malformed
+  JSON, provider failures, chapter scope and format follow-ups.
+- Two three-document table requests produced four populated feature rows each,
+  with no invalid-reference warnings, in 7.64 and 10.49 s.
+- The two-chapter comparison included only chapters 1 and 2 and completed in
+  6.62 s. The <=200-word comparison covered all three in 164 prose words and
+  completed in 6.49 s. Neither raised a reference-membership warning.
+- Reports: `tables-source-cells-1310.json` and `network-source-cells-1310.json`
+  under ignored `evaluations/local-results/`. Earlier failed experiments are
+  retained separately, not counted as successful checks.
+
+The output was inspected for readability, row completeness, chapter selection,
+and selected evidence support. It is now an actual comparison rather than a
+quote dump. However, broad generalizations remain a risk: the two-chapter
+"mechanisms" cell groups several techniques under reliable delivery, which
+requires more careful factual adjudication than reference validation. Some
+cells cite broad excerpts for several concepts. Therefore these results are NOT
+a complete factual-accuracy pass. Source notes can also contain technical errors.
+Final Cloud validation and answer-quality review still precede v1.0 sign-off.

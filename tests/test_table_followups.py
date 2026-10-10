@@ -26,11 +26,11 @@ class TableFollowupTests(unittest.TestCase):
         history = [{"role": "user", "content": '“Compare chapter 1 with chapter 2” and its table follow-up'},
                    {"role": "assistant", "content": "Earlier answer"}]
         chain = Mock()
-        chain.invoke.side_effect = [json.dumps([{"id": f"S{i}", "quote": f"Chapter {i} contains its own evidence."}]) for i in (1, 2)]
+        chain.invoke.side_effect = [json.dumps([{"feature": "Main focus", "summary": f"Chapter {i} evidence", "evidence": [{"id": f"S{i}"}]}]) for i in (1, 2)]
         with patch.object(pipeline, "_answer_chain", return_value=chain):
             answer = pipeline.answer_question("difference table", index, history)
         self.assertEqual(chain.invoke.call_count, 2)
-        self.assertIn("| Document | Selected evidence |", answer.text)
+        self.assertIn("| Feature | CHAPTER 1.pdf | CHAPTER 2.pdf |", answer.text)
         self.assertNotIn("CHAPTER 3", answer.text)
         self.assertEqual(len(answer.sources), 2)
         self.assertEqual(answer.warning, "")
@@ -99,6 +99,6 @@ class TableFollowupTests(unittest.TestCase):
             answer = pipeline.answer_question("make differnce table of 3 chapters", index)
         guidance = chain.invoke.call_args.args[0]["task_guidance"]
         self.assertNotIn("Do not use a Markdown table", guidance)
-        self.assertIn("Copy each quote VERBATIM", guidance)
-        self.assertIn("| Document | Selected evidence |", answer.text)
+        self.assertIn("comparison cells for THIS document", guidance)
+        self.assertIn("| Feature |", answer.text)
         self.assertEqual(len(answer.sources), 3)

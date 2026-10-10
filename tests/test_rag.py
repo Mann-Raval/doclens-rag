@@ -108,7 +108,7 @@ class RagTests(unittest.TestCase):
             )
 
         self.assertEqual(rag._question_mode("Compare the uploaded PDFs"), "comparison")
-        self.assertIn("Copy each quote VERBATIM", chain.values["task_guidance"])
+        self.assertIn("comparison cells for THIS document", chain.values["task_guidance"])
         self.assertIn("TCP provides reliable transport", chain.values["context"])
         self.assertNotIn("Ethernet uses frames", chain.values["context"])
 
