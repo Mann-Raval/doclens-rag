@@ -38,9 +38,9 @@ class TableFollowupTests(unittest.TestCase):
         ], backend="lexical")
         chain = Mock()
         chain.invoke.side_effect = [json.dumps([{
-            "feature": "Main focus", "summary": f"Chapter {i} original focus",
+            "feature": feature, "summary": f"Chapter {i} original focus",
             "evidence": [{"id": f"S{i}"}],
-        }]) for i in (1, 2)]
+        } for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]) for i in (1, 2)]
         with patch.object(pipeline, "_answer_chain", return_value=chain):
             original = pipeline.answer_question("Compare chapter 1 with chapter 2", index)
         message = {**asdict(original), "role": "assistant", "content": original.text}
@@ -98,7 +98,7 @@ class TableFollowupTests(unittest.TestCase):
         history = [{"role": "user", "content": '“Compare chapter 1 with chapter 2” and its table follow-up'},
                    {"role": "assistant", "content": "Earlier answer"}]
         chain = Mock()
-        chain.invoke.side_effect = [json.dumps([{"feature": "Main focus", "summary": f"Chapter {i} evidence", "evidence": [{"id": f"S{i}"}]}]) for i in (1, 2)]
+        chain.invoke.side_effect = [json.dumps([{"feature": feature, "summary": f"Chapter {i} evidence", "evidence": [{"id": f"S{i}"}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]) for i in (1, 2)]
         with patch.object(pipeline, "_answer_chain", return_value=chain):
             answer = pipeline.answer_question("difference table", index, history)
         self.assertEqual(chain.invoke.call_count, 2)

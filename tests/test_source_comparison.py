@@ -58,8 +58,8 @@ class SourceComparisonTests(unittest.TestCase):
     def test_each_call_sees_one_source_and_only_validated_text_streams(self):
         chain = Mock()
         chain.invoke.side_effect = [
-            json.dumps([{"feature": "Main focus", "summary": "Network connectivity", "evidence": [{"id":"S1","quote":"Networks connect computers."}]}]),
-            json.dumps([{"feature": "Main focus", "summary": "Error detection", "evidence": [{"id":"S2","quote":"Checksums detect errors."}]}]),
+            json.dumps([{"feature": feature, "summary": "Network connectivity", "evidence": [{"id":"S1","quote":"Networks connect computers."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]),
+            json.dumps([{"feature": feature, "summary": "Error detection", "evidence": [{"id":"S2","quote":"Checksums detect errors."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]),
         ]
         updates = []
         text, _, warning, calls, _ = compare_sources(chain, self.docs, self.payload, table=True, on_update=updates.append)
@@ -106,3 +106,41 @@ class SourceComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SAFETY"):
             compare_sources(chain, self.docs, self.payload)
         chain.invoke.assert_called_once()
+
+    def test_repair_only_fills_missing_cells_and_preserves_valid_cells(self):
+        def cell(feature, summary="Original summary", identity="S1"):
+            return {"feature": feature, "summary": summary, "evidence": [{"id": identity}]}
+        original = cell("Main focus")
+        chain = Mock()
+        chain.invoke.side_effect = [
+            json.dumps([original, cell("Key concepts", identity="S99")]),
+            json.dumps([cell("Main focus", "Must not overwrite"), cell("Key concepts"),
+                        cell("Mechanisms and methods"), cell("Examples")]),
+        ]
+        text, usage, warning, calls, snapshot = compare_sources(chain, self.docs[:1], self.payload)
+        self.assertEqual(calls, 2)
+        self.assertEqual(len(snapshot["cards"]["a.pdf"]), 4)
+        self.assertEqual(snapshot["cards"]["a.pdf"]["Main focus"], original)
+        self.assertNotIn("Must not overwrite", text)
+        self.assertEqual(warning, "")
+        self.assertIn("source_1_repair", usage)
+        first, repair = [call.args[0] for call in chain.invoke.call_args_list]
+        self.assertEqual(first["context"], repair["context"])
+        self.assertNotIn('"Main focus"', repair["task_guidance"])
+        self.assertIn('"Key concepts"', repair["task_guidance"])
+
+    def test_failed_repair_is_bounded_and_retains_valid_cells(self):
+        draft = json.dumps([{"feature": "Main focus", "summary": "Keep this",
+                             "evidence": [{"id": "S1"}]}])
+        for failure in ("[]", "invalid json", ConnectionError("private provider detail"),
+                        AIMessage(content="", response_metadata={"finish_reason": "SAFETY"})):
+            with self.subTest(failure=type(failure).__name__):
+                chain = Mock()
+                chain.invoke.side_effect = [draft, failure]
+                text, _, warning, calls, _ = compare_sources(chain, self.docs[:1], self.payload)
+                self.assertEqual(calls, 2)
+                self.assertEqual(chain.invoke.call_count, 2)
+                self.assertIn("Keep this [S1]", text)
+                self.assertIn("Summary unavailable", text)
+                self.assertIn("Key concepts", warning)
+                self.assertNotIn("private provider detail", warning)

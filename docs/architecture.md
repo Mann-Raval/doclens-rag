@@ -106,3 +106,16 @@ disagreements. The manual audit in `evaluations/citation-audit-2026-10-11.md`
 records both supported and partially supported claims. A fresh live run still
 had semantic citation gaps despite valid reference IDs; no entailment guarantee
 or release-readiness claim is made.
+
+### Bounded missing-cell repair (build 1.3.14)
+
+After validating each source profile, the pipeline requests any missing/invalid
+feature cells once more, using the same source-only evidence. The repair validator
+accepts only missing feature labels, so successful cells and their references
+cannot be overwritten. Complete profiles require no repair call; each incomplete
+source adds at most one call. A provider failure or invalid repair preserves the
+valid draft cells and reports unresolved features. Initial provider failures still
+propagate. Formatting-only follow-ups continue to reuse the saved final snapshot.
+
+This is a completeness repair, not a semantic entailment check. Unsupported
+features may remain unavailable, and valid-looking claims can still be wrong.

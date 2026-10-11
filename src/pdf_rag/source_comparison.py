@@ -121,8 +121,32 @@ def compare_sources(chain, documents, payload, *, table=False, word_limit=None, 
         usage[f"source_{len(cards) + 1}_draft"] = tokens
         candidates = comparison_cells(raw, evidence, features, cell_words)
         cards[source] = {cell["feature"]: cell for cell in candidates}
-        if not cards[source]:
-            warnings.append(f"Could not generate valid comparison cells for {source}; check the source excerpts.")
+        missing = tuple(feature for feature in features if feature not in cards[source])
+        if missing:
+            repair = dict(scoped)
+            repair["task_guidance"] = scoped["task_guidance"].replace(
+                f"Use these exact feature labels: {json.dumps(features)}.",
+                f"Use these exact feature labels: {json.dumps(missing)}.",
+            ) + (
+                " This is the only repair attempt for omitted or invalid cells. "
+                "Return ONLY the requested missing features. Keep each summary short "
+                "and use only this source's evidence IDs. Do not invent content to fill "
+                "a row; omit it if the supplied excerpts cannot support a summary."
+            )
+            calls += 1
+            try:
+                repaired, repair_tokens = _invoke_checked(chain, repair)
+                usage[f"source_{len(cards)}_repair"] = repair_tokens
+                # Only missing labels can pass validation: valid cells are immutable.
+                for cell in comparison_cells(repaired, evidence, missing, cell_words):
+                    cards[source][cell["feature"]] = cell
+            except Exception as error:
+                # Preserve the completed draft on a failed optional repair. Do not
+                # expose provider error bodies (which may contain sensitive data).
+                warnings.append(f"Comparison repair failed for {source} ({type(error).__name__}); valid cells were preserved.")
+            remaining = [feature for feature in missing if feature not in cards[source]]
+            if remaining:
+                warnings.append(f"Could not generate valid comparison cells for {source}: {', '.join(remaining)}. Check the source excerpts.")
     text = render_comparison(cards, features, table)
     if on_update:
         on_update(text)
