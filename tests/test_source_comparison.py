@@ -9,6 +9,26 @@ from src.pdf_rag.source_comparison import compare_sources, comparison_cells, req
 
 
 class SourceComparisonTests(unittest.TestCase):
+    def test_prompt_requires_item_level_support_and_preserves_source_conflicts(self):
+        chain = Mock()
+        chain.invoke.return_value = "[]"
+        compare_sources(chain, self.docs[:1], self.payload)
+        guidance = chain.invoke.call_args.args[0]["task_guidance"]
+        self.assertIn("check every listed item", guidance)
+        self.assertIn("own evidence IDs", guidance)
+        self.assertIn("Do not expand a technology name", guidance)
+        self.assertIn("If excerpts conflict", guidance)
+        self.assertIn("not external fact-checking", guidance)
+
+    def test_exact_supporting_span_must_belong_to_cited_excerpt(self):
+        evidence = {
+            "S1": Document(page_content="Wired media includes Ethernet and optical fiber cables."),
+            "S2": Document(page_content="Key technologies: Ethernet, Wi-Fi."),
+        }
+        quote = "Wired media includes Ethernet and optical fiber cables."
+        self.assertEqual(validated_quotes(json.dumps([{"id": "S2", "quote": quote}]), evidence, 30), [])
+        self.assertEqual(validated_quotes(json.dumps([{"id": "S1", "quote": quote}]), evidence, 30), [("S1", quote)])
+
     def test_explicit_chapters_exclude_other_files(self):
         docs = [Document(page_content="text", metadata={"source": f"CHAPTER-{i} notes.pdf"}) for i in (1, 2, 3)]
         self.assertEqual(requested_source_chunks(docs, "Compare chapter 1 with chapter 2"), docs[:2])

@@ -100,3 +100,9 @@ structured metadata use the normal generation path.
 Clear chat discards snapshots; replacing/removing uploads resets history. A snapshot
 from a different index cannot be reused, even if filenames and contents match.
 This fixes formatting consistency, not the factual accuracy of the original cells.
+
+Build 1.3.13 strengthens item-level citation instructions and handling of source
+disagreements. The manual audit in `evaluations/citation-audit-2026-10-11.md`
+records both supported and partially supported claims. A fresh live run still
+had semantic citation gaps despite valid reference IDs; no entailment guarantee
+or release-readiness claim is made.
