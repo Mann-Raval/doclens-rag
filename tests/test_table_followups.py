@@ -8,6 +8,29 @@ from src.pdf_rag.retrieval import PdfIndex
 
 
 class TableFollowupTests(unittest.TestCase):
+    def test_short_table_phrases_and_typo_preserve_original_comparison(self):
+        index, original, history = self.comparison_fixture()
+        for query in ("in tabel form", "in table form", "in a table", "as a table",
+                      "in tabular form", "please in table format", "in table form please"):
+            with self.subTest(query=query), patch.object(
+                pipeline, "_answer_chain", side_effect=AssertionError("Must reuse comparison")
+            ):
+                result = pipeline.answer_question(query, index, history)
+                self.assertEqual(result.comparison, original.comparison)
+                self.assertEqual(result.evidence, original.evidence)
+                self.assertEqual(result.attempts, 0)
+                self.assertIn("Chapter 2 original focus", result.text)
+                self.assertNotIn("CHAPTER 3", result.text)
+        for query in ("in table form compare TCP and UDP", "in a table compare chapter 3",
+                      "What is a routing tabel?"):
+            self.assertFalse(pipeline._is_format_followup(query))
+
+    def test_chapter_typo_routes_and_scopes_the_comparison(self):
+        query, _ = pipeline._resolve_question("make difference between chaoter 1 and chaoter 2", [])
+        self.assertTrue(pipeline._cross_document_comparison(query))
+        docs = [Document(page_content="text", metadata={"source": f"CHAPTER {i}.pdf"}) for i in (1, 2, 3)]
+        self.assertEqual(pipeline.requested_source_chunks(docs, query), docs[:2])
+
     def comparison_fixture(self):
         index = PdfIndex.from_documents([
             Document(page_content=f"Chapter {i} evidence", metadata={"source": f"CHAPTER {i}.pdf", "page": i})

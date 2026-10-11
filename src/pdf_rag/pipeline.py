@@ -412,11 +412,12 @@ def _resolve_question(
     query: str, messages: Sequence[dict[str, str]]
 ) -> tuple[str, bool]:
     """Map short retry/continue messages back to the last substantive question."""
+    query = _correct_question_typos(query)
     if _is_format_followup(query):
         for message in reversed(messages):
             previous = message.get("content", "").strip()
             if message.get("role") == "user" and previous and not _is_retry_message(previous) and not _is_format_followup(previous):
-                return f"{previous}\nRequested format: {query}", False
+                return f"{_correct_question_typos(previous)}\nRequested format: {query}", False
         if is_comparison_inventory(query):
             return query, False
         return f"Compare the uploaded PDFs.\nRequested format: {query}", False
@@ -452,13 +453,21 @@ def _is_retry_message(query: str) -> bool:
         "regenerate the answer",
     }
     return normalized in retry_phrases
+def _correct_question_typos(query: str) -> str:
+    """Correct a small set of intent typos, not arbitrary document terminology."""
+    query = re.sub(r"\bdiffernce\b", "difference", query, flags=re.I)
+    query = re.sub(r"\btabel\b", "table", query, flags=re.I)
+    return re.sub(r"\b(?:chaoter|chpater)\b(?=\s+\d)", "chapter", query, flags=re.I)
+
+
 def _normalized_question(query: str) -> str:
-    normalized = " ".join(query.casefold().split())
-    return re.sub(r"\bdiffernce\b", "difference", normalized)
+    return " ".join(_correct_question_typos(query).casefold().split())
 
 
 def _is_format_followup(query: str) -> bool:
     normalized = _normalized_question(query).strip(".!? ")
+    if re.fullmatch(r"(?:please )?(?:in|as) (?:a |the )?(?:table(?: form| format)?|tabular form)(?: please)?", normalized):
+        return True
     if re.fullmatch(r"(?:please )?(?:a |the )?(?:(?:difference|comparison) )?table(?: form)?(?: please)?", normalized):
         return True
     if re.fullmatch(r"(?:all |the )?(?:differences?|comparisons?) in (?:a )?table(?: form)?", normalized):
