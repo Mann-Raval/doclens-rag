@@ -24,6 +24,22 @@ def index():
 
 
 class AppLifecycleTests(unittest.TestCase):
+    def test_comparison_metadata_is_saved_and_clear_chat_discards_it(self):
+        app = AppTest.from_file("../app.py")
+        build = Mock(return_value=index())
+        uploads = [upload("a.pdf")]
+        self.run_app(app, uploads, build)
+        app.session_state.messages = [{"role": "user", "content": "Compare PDFs"}]
+        snapshot = {"session_id": "test-session", "cards": {}, "features": ["Main focus"]}
+        with patch("rag.answer_question", return_value=RagAnswer(
+            text="Comparison", pages=(), comparison=snapshot,
+        )):
+            self.run_app(app, uploads, build)
+        self.assertEqual(app.session_state.messages[-1]["comparison"], snapshot)
+        next(button for button in app.button if button.label.endswith("Clear chat")).click()
+        self.run_app(app, uploads, build)
+        self.assertEqual(app.session_state.messages, [])
+
     def test_removing_failed_upload_allows_fresh_attempt(self):
         app = AppTest.from_file("../app.py")
         uploads = [upload("a.pdf")]

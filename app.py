@@ -13,7 +13,7 @@ from src.pdf_rag.presentation import present_answer
 
 MAX_PDFS = 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.15"
 st.set_page_config(page_title="DocLens", page_icon="📄", layout="wide")
 
 
@@ -177,11 +177,11 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.answer_error = None
         st.rerun()
-    st.caption(f"Build {APP_VERSION}")
+    st.caption(f"Build {APP_VERSION} | v1.0")
 
 st.title("DocLens")
 st.caption("Ask detailed questions, compare information, or summarize your PDFs.")
-st.caption("Test version: verify important claims against the source excerpts. Cross-document comparisons can misattribute details.")
+st.caption("Learning demo: verify important claims against the source excerpts. Citations do not guarantee accuracy; comparisons can misinterpret details.")
 
 pdf_ready = st.session_state.pdf_index is not None
 if not pdf_ready:
@@ -271,6 +271,7 @@ if pdf_ready and not st.session_state.answer_error and st.session_state.messages
                     "pages": result.pages,
                     "sources": result.sources,
                     "evidence": result.evidence,
+                    "comparison": result.comparison,
                     "warning": result.warning,
                     "finish_reason": result.finish_reason,
                     "usage": result.usage,

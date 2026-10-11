@@ -18,12 +18,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdf-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scenario", choices=("comparison", "summary", "first"), default="comparison")
+    parser.add_argument("--scenario", choices=("comparison", "summary", "first", "inventory", "release"), default="comparison")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Choose a new output path; existing reports are preserved")
-    files = sorted(args.pdf_dir.glob("CHAPTER*.pdf"))
-    if len(files) != 3:
+    files = ([args.pdf_dir / "Operating_System_Notes.pdf"] if args.scenario == "inventory"
+             else sorted(args.pdf_dir.glob("CHAPTER*.pdf")))
+    if args.scenario == "inventory":
+        if not files[0].is_file():
+            parser.error("Expected Operating_System_Notes.pdf")
+    elif len(files) != 3:
         parser.error("Expected three CHAPTER PDFs")
     index = process_pdfs([(str(path), path.name) for path in files])
     history = [{"role": "user", "content": "Compare the uploaded PDFs, explaining their shared ideas and important differences."}]
@@ -32,9 +36,17 @@ def main():
                    {"role": "assistant", "content": "I don't know based on the provided documents."}]
     elif args.scenario == "first":
         history = []
+    queries = ("make difference table", "make differnce table of 3 chapters")
+    if args.scenario == "release":
+        history = []
+        queries = ("give difference of chapter 1 and chapter 2 in table form",
+                   "in tabel form", "can you put it in table form")
+    if args.scenario == "inventory":
+        history = []
+        queries = ("give me all differences in notes so that i can learn for exam", "all differences in table form")
     results = []
     try:
-        for query in ("make difference table", "make differnce table of 3 chapters"):
+        for query in queries:
             started = time.perf_counter()
             answer = answer_question(query, index, history, on_update=lambda text: None)
             lines = [line for line in answer.text.splitlines() if line.strip().startswith("|")]
@@ -44,7 +56,11 @@ def main():
                       **asdict(answer)}
             results.append(result)
             print(query, answer.finish_reason, f"{result['seconds']:.2f}s", f"table lines={len(lines)}", f"warnings={answer.warning!r}", flush=True)
-            history.extend([{"role": "user", "content": query}, {"role": "assistant", "content": answer.text}])
+            history.extend([{"role": "user", "content": query},
+                            {**asdict(answer), "role": "assistant", "content": answer.text}])
+            if args.scenario == "release" and len(results) > 1:
+                if answer.attempts != 0 or answer.text != results[0]["text"]:
+                    raise AssertionError("Formatting follow-up regenerated or changed the comparison")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
     finally:

@@ -1,6 +1,10 @@
 # Stage 1 retest — 2026-10-09
 
-**Status: ready for a Cloud test deployment, not a v1.0 release.**
+**Historical report.** The owner later approved a v1.0 learning-demo release with
+known quality limitations; see the [current release decision](v1-release-2026-10-11.md).
+The failures recorded below are preserved, not retrospectively marked passed.
+
+Latest review: [2026-10-10 release checks](release-checks-2026-10-10.md).
 
 ## Executed checks
 
@@ -164,3 +168,22 @@ No embedding model, chunk coverage or retrieval quality was reduced for speed.
 Valid large-PDF embedding latency on Cloud still needs measurement.
 All 51 regression tests passed, including early combined-page rejection,
 password-protected input, progress, retry caching and upload removal.
+
+## Comparison inventories (build 1.3.6)
+
+Requests such as "give me all differences in notes so that I can learn for exam"
+now scan every indexed passage for comparison cues, rather than using top-10
+semantic retrieval. Matching passages and same-file neighboring context are
+bounded to 60 passages for generation. With no cues, broad sampling is used.
+The UI explicitly warns that this is not a verified exhaustive list. Image-only
+tables, implicit comparisons and context omitted by the cap may be missed.
+
+"All differences in table form" now retains the preceding question's scope;
+the prompt requests compact tables for the supported concept pairs within the
+notes, not a file-to-file comparison or a single unrelated table. Named-pair
+requests with "between" remain on the specific-comparison route.
+
+56 tests passed, including matches at the end of a 295-passage fixture, bounded
+context, missing cues and table follow-ups. These are deterministic routing and
+retrieval checks, not a live-model quality evaluation on the user's OS PDF.
+No claim of exhaustive coverage or v1.0 readiness is made.

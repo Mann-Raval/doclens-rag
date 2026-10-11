@@ -3,11 +3,13 @@ import os
 import re
 from typing import Callable, Sequence
 from langchain_core.documents import Document
-from .config import MAX_HISTORY_MESSAGES, MAX_COMPARISON_CHUNKS
+from .config import MAX_HISTORY_MESSAGES, MAX_COMPARISON_CHUNKS, MAX_SUMMARY_CHUNKS
 from .schemas import RagAnswer
 from .retrieval import PdfIndex, _select_broad_chunks, _evenly_spaced_chunks
 from .ingestion import process_pdf, process_pdfs
 from .generation import _answer_chain, response_details
+from .comparisons import is_comparison_inventory, comparison_passages
+from .source_comparison import compare_sources, requested_source_chunks, render_comparison, synthesis_source_chunks
 
 def answer_question(
     query: str,
@@ -18,16 +20,28 @@ def answer_question(
 ) -> RagAnswer:
     """Retrieve supporting passages and generate a cited answer."""
     full_history = list(chat_history or [])
+    reused = _reformat_comparison(query, pdf_index, full_history)
+    if reused is not None:
+        if on_update:
+            on_update(reused.text)
+        return reused
     history = full_history[-MAX_HISTORY_MESSAGES:]
     history_text = _format_history(history)
     effective_query, is_retry = _resolve_question(query, full_history)
     retrieval_query = _build_retrieval_query(effective_query, history)
     question_mode = _question_mode(effective_query)
-    cross_document = question_mode == "comparison" and _cross_document_comparison(effective_query)
+    cross_document = _cross_document_comparison(effective_query, pdf_index.chunks)
     if cross_document:
+        question_mode = "comparison"
+    inventory = is_comparison_inventory(effective_query) and not cross_document
+    if inventory:
+        documents = comparison_passages(pdf_index.chunks)
+    elif cross_document:
         documents = _select_broad_chunks(
-            pdf_index.chunks, MAX_COMPARISON_CHUNKS
+            requested_source_chunks(pdf_index.chunks, effective_query), MAX_COMPARISON_CHUNKS
         )
+    elif question_mode == "synthesis":
+        documents = _select_broad_chunks(synthesis_source_chunks(pdf_index.chunks, effective_query), MAX_SUMMARY_CHUNKS)
     else:
         documents = pdf_index.retrieve(
             retrieval_query,
@@ -35,7 +49,10 @@ def answer_question(
         )
     if not documents:
         return RagAnswer(
-            text="I don't know based on the provided documents.", pages=(), sources=()
+            text=("I couldn't identify all the requested documents or chapters in the uploaded filenames. "
+                  "Please check the chapter numbers or use the exact filenames."
+                  if cross_document else "I don't know based on the provided documents."),
+            pages=(), sources=()
         )
 
     context = "\n\n".join(f"Evidence [S{i}]\n{_format_document(doc)}" for i, doc in enumerate(documents, 1))
@@ -79,14 +96,41 @@ def answer_question(
             "such as HTTP/HTTPS unless those were requested. Use only the supplied "
             "excerpts as evidence, not previous assistant answers."
         )
+    if inventory:
+        payload["history"] = "(Use the current evidence, not previous assistant answers.)"
+        payload["task_guidance"] = (
+            "Build an exam-revision inventory of distinct concept comparisons WITHIN the notes, "
+            "not a comparison of PDF files. Identify supported pairs or groups throughout the "
+            "supplied excerpts, deduplicate repeated comparisons, and cover each supported pair. "
+            "Do not focus on only the first pair. For each pair give concise, contrasting facts "
+            "with evidence-ID citations. Use a separate compact Markdown table for each pair "
+            "if tables were requested; otherwise use short sections. No HTML or <br> tags. "
+            "Do not invent pairs or fill missing differences from general knowledge. "
+            "Start with a list of the comparison topics you found. This is a heuristic scan "
+            "with bounded excerpts: never claim these are ALL comparisons in the full PDF "
+            "or that the PDF contains no others. State the coverage limitation briefly."
+        )
+        if word_limit:
+            payload["task_guidance"] += f" Keep the response within {word_limit} words."
     chain = _answer_chain()
     stream_update = (lambda text: on_update(_render_evidence_ids(text, documents))) if on_update else None
-    response = _generate(chain, payload, stream_update)
-    text, reason, usage = response_details(response)
-    attempts = 1
+    scoped_comparison = cross_document and not inventory and len({doc.metadata.get("source") for doc in documents}) > 1
+    comparison_warning = ""
+    comparison = {}
+    if scoped_comparison:
+        text, usage, comparison_warning, attempts, comparison = compare_sources(
+            chain, documents, payload, table=_requests_table(effective_query),
+            word_limit=word_limit, on_update=stream_update,
+        )
+        reason = "STOP"
+        comparison["session_id"] = pdf_index.session_id
+    else:
+        response = _generate(chain, payload, stream_update)
+        text, reason, usage = response_details(response)
+        attempts = 1
     # Retry only a token-limit/empty response, never a safety-blocked response.
     too_long = word_limit and _prose_word_count(text) > word_limit
-    if reason == "MAX_TOKENS" or (reason in {"STOP", "UNKNOWN"} and (not text or too_long)):
+    if not scoped_comparison and (reason == "MAX_TOKENS" or (reason in {"STOP", "UNKNOWN"} and (not text or too_long))):
         attempts = 2
         payload["task_guidance"] += (
             f" Return a complete but shorter answer, at most {word_limit or 500} words."
@@ -96,13 +140,17 @@ def answer_question(
         usage = {"first_attempt": usage, "second_attempt": second_usage}
     if not text:
         raise RuntimeError(f"The model returned no answer (finish reason: {reason}). Retry the question.")
-    warning = ""
+    warning = comparison_warning
     if reason not in {"STOP", "UNKNOWN"}:
         warning = f"The answer may be incomplete. Model finish reason: {reason}."
     text = _render_evidence_ids(text, documents)
     text = _normalize_citations(text, documents)
     citation_warning = _citation_warning(text, documents)
     warning = " ".join(part for part in (warning, citation_warning) if part)
+    if inventory:
+        warning = (warning + f" Comparison discovery scanned {len(pdf_index.chunks)} passages and supplied "
+                   f"{len(documents)} to the model. Comparisons without explicit textual cues, including "
+                   "image-only tables, may be missed; this is not a verified exhaustive list.").strip()
     if word_limit and _prose_word_count(text) > word_limit:
         warning = (warning + f" The answer exceeds the requested {word_limit}-word limit.").strip()
     pages = tuple(
@@ -122,7 +170,36 @@ def answer_question(
     } for doc in documents)
     return RagAnswer(text=text, pages=pages, sources=sources,
                      finish_reason=reason, usage=usage, warning=warning,
-                     attempts=attempts, evidence=evidence)
+                     attempts=attempts, evidence=evidence, comparison=comparison)
+
+
+def _reformat_comparison(query, pdf_index, history):
+    """Render the immediately preceding structured answer, never regenerate it.
+
+    A new topic, retry, old message without metadata, or replaced index cannot
+    reuse this snapshot. The snapshot stays in this session's chat history.
+    """
+    if not _is_format_followup(query) or not history:
+        return None
+    previous = history[-1]
+    snapshot = previous.get("comparison")
+    if (previous.get("role") != "assistant" or not snapshot
+            or snapshot.get("session_id") != pdf_index.session_id):
+        return None
+    evidence = tuple(previous.get("evidence", ()))
+    if not evidence:
+        return None
+    documents = [Document(page_content=item["text"], metadata={
+        "source": item["source"], "page": item["page"] - 1,
+    }) for item in evidence]
+    text = render_comparison(snapshot["cards"], snapshot["features"], table=True)
+    text = _render_evidence_ids(text, documents)
+    return RagAnswer(
+        text=text, pages=tuple(previous.get("pages", ())),
+        sources=tuple(previous.get("sources", ())), evidence=evidence,
+        warning=previous.get("warning", ""), finish_reason="STOP", attempts=0,
+        usage={"reused_comparison": True}, comparison=snapshot,
+    )
 
 
 def _generate(chain, payload, on_update):
@@ -146,35 +223,59 @@ def _prose_word_count(text: str) -> int:
     return len(re.sub(r"\[[^\]\n]*\]", "", text).split())
 
 
-def _cross_document_comparison(query: str) -> bool:
+def _cross_document_comparison(query: str, chunks=()) -> bool:
+    """Recognize document targets independently of comparison phrasing.
+
+    Named-topic comparisons using PDFs as evidence remain topic searches.
+    Numbered chapters and uploaded filenames are explicit document targets.
+    """
     query = _normalized_question(query)
     if "requested format:" in query:
         subject, formatting = query.split("requested format:", 1)
         collection_scope = re.search(r"\b(?:all|each|uploaded)\b[^.?!]*\b(?:pdfs?|documents?|chapters?)\b|\bcollection\b", subject)
         if _requests_table(formatting) and _question_mode(subject) == "synthesis" and collection_scope:
             return True
+    intent = re.search(r"\b(?:compar\w*|differ\w*|contrast\w*|versus|vs)\b", query)
+    target = re.split(r"\b(?:using|according to|based on|from)\b", query, maxsplit=1)[0]
+    numbered = re.findall(r"\bchapters?\s*[-#]?\s*(\d+)\b", target)
+    sources = {str(doc.metadata.get("source", "")).casefold() for doc in chunks}
+    named = [source for source in sources if source and source in query]
+    if intent and (numbered or len(named) >= 2):
+        return True
     # "Compare TCP and UDP using these PDFs" is a topic comparison.
     qualifiers = r"(?:(?:all|the|these|those|both|uploaded|selected|three|two|\d+)\s+)*"
     objects = r"(?:pdfs?|documents?|chapters?|files?)\b"
-    return bool(re.search(r"\b(?:compar\w*\s+|differences?\s+between\s+)" + qualifiers + objects, query, re.I)
+    relation = r"(?:(?:of|between|among|for)\s+)?"
+    return bool(re.search(r"\b(?:compar\w*|differences?|differentiate|contrast)\s+" + relation + qualifiers + objects, query, re.I)
                 or re.search(r"\bhow\s+do\s+" + qualifiers + objects + r".*\bdiffer\b", query, re.I)
-                or re.search(r"\btable\s+(?:of|for|between|comparing)\s+" + qualifiers + objects, query, re.I))
+                or re.search(r"\btable\s+(?:of|for|between|comparing)\s+" + qualifiers + objects, query, re.I)
+                or re.search(objects + r".*\b(?:vs|versus|compared\s+(?:to|with))\b.*" + objects, query))
 
 
 def _render_evidence_ids(text: str, documents: Sequence[Document]) -> str:
     """Expand known IDs deterministically; retain unknown IDs for warnings."""
     markers = {str(i): _format_document(doc).split("\n", 1)[0] for i, doc in enumerate(documents, 1)}
     def render(match):
-        ids = re.findall(r"S(\d+)", match.group(1))
+        ids = []
+        for group in re.split(r"\s*[,;]\s*", match.group(1)):
+            bounds = re.findall(r"S(\d+)", group)
+            if len(bounds) == 2:
+                first, last = map(int, bounds)
+                if not 1 <= first <= last <= len(documents):
+                    return match.group(0)
+                ids.extend(str(i) for i in range(first, last + 1))
+            else:
+                ids.extend(bounds)
         if not all(identity in markers for identity in ids):
             return match.group(0)
         return " ".join(dict.fromkeys(markers[identity] for identity in ids))
-    return re.sub(r"\[(S\d+(?:,\s*S\d+)*)\]", render, text)
+    identity = r"S\d+(?:\s*[-–]\s*S\d+)?"
+    return re.sub(r"\[\s*(" + identity + r"(?:\s*[,;]\s*" + identity + r")*)\s*\]", render, text)
 
 
 def _citation_warning(text: str, documents: Sequence[Document]) -> str:
     """Validate marker membership only; this is NOT claim entailment checking."""
-    if re.search(r"\[S\d+[^\]\n]*\]", text):
+    if re.search(r"\[\s*S\d+[^\]\n]*\]", text):
         return "Some evidence IDs are unknown. Verify claims against the retrieved source excerpts."
     valid = {_format_document(doc).split("\n", 1)[0] for doc in documents}
     cited = re.findall(r"\[[^\[\]\n]+,\s*Pages?\b[^\[\]\n]*\]", text, re.I)
@@ -332,11 +433,14 @@ def _resolve_question(
     query: str, messages: Sequence[dict[str, str]]
 ) -> tuple[str, bool]:
     """Map short retry/continue messages back to the last substantive question."""
+    query = _correct_question_typos(query)
     if _is_format_followup(query):
         for message in reversed(messages):
             previous = message.get("content", "").strip()
             if message.get("role") == "user" and previous and not _is_retry_message(previous) and not _is_format_followup(previous):
-                return f"{previous}\nRequested format: {query}", False
+                return f"{_correct_question_typos(previous)}\nRequested format: {query}", False
+        if is_comparison_inventory(query):
+            return query, False
         return f"Compare the uploaded PDFs.\nRequested format: {query}", False
     if not _is_retry_message(query):
         return query, False
@@ -370,13 +474,31 @@ def _is_retry_message(query: str) -> bool:
         "regenerate the answer",
     }
     return normalized in retry_phrases
+def _correct_question_typos(query: str) -> str:
+    """Correct a small set of intent typos, not arbitrary document terminology."""
+    query = re.sub(r"\bdiffernce\b", "difference", query, flags=re.I)
+    query = re.sub(r"\btabel\b", "table", query, flags=re.I)
+    return re.sub(r"\b(?:chaoter|chpater)\b(?=\s+\d)", "chapter", query, flags=re.I)
+
+
 def _normalized_question(query: str) -> str:
-    normalized = " ".join(query.casefold().split())
-    return re.sub(r"\bdiffernce\b", "difference", normalized)
+    return " ".join(_correct_question_typos(query).casefold().split())
 
 
 def _is_format_followup(query: str) -> bool:
     normalized = _normalized_question(query).strip(".!? ")
+    normalized = re.sub(r"^(?:can|could|would) you (?:please )?", "", normalized)
+    table_form = r"(?:a |the )?(?:table(?: form| format)?|tabular (?:form|format))"
+    if re.fullmatch(r"(?:please )?(?:give|show|make|present|put|convert|turn|format) "
+                    r"(?:it|this|that|the same|the answer|the comparison) "
+                    r"(?:(?:in|into|as) )?" + table_form + r"(?: please)?", normalized):
+        return True
+    if re.fullmatch(r"(?:please )?(?:in|as) (?:a |the )?(?:table(?: form| format)?|tabular form)(?: please)?", normalized):
+        return True
+    if re.fullmatch(r"(?:please )?(?:a |the )?(?:(?:difference|comparison) )?table(?: form)?(?: please)?", normalized):
+        return True
+    if re.fullmatch(r"(?:all |the )?(?:differences?|comparisons?) in (?:a )?table(?: form)?", normalized):
+        return True
     return bool(re.fullmatch(
         r"(?:please )?(?:(?:make|create|show|give)(?: me)? (?:a |the )?(?:(?:difference|comparison) )?table|"
         r"(?:put|present|format|convert|turn) (?:it|this|that|the answer|the comparison) (?:in|into|as) (?:a )?table)"
@@ -385,8 +507,11 @@ def _is_format_followup(query: str) -> bool:
 
 def _requests_table(query: str) -> bool:
     normalized = _normalized_question(query)
+    formatting = normalized.rsplit("requested format:", 1)[-1].strip()
+    if _is_format_followup(formatting):
+        return True
     return bool(re.search(r"\b(?:make|create|show|give|format|convert|present|put|turn)\b.*\btable\b|"
-                          r"\b(?:in|as)\s+(?:a\s+)?table\b|\b(?:comparison|difference)\s+table\b", normalized))
+                          r"\b(?:in|as)\s+(?:a\s+)?table\b|\b(?:comparison|difference)\s+tables?\b", normalized))
 
 
 def _question_mode(query: str) -> str:

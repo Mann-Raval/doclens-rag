@@ -11,3 +11,4 @@ class RagAnswer:
     warning: str = ""
     attempts: int = 1
     evidence: tuple[dict, ...] = ()
+    comparison: dict = field(default_factory=dict)
