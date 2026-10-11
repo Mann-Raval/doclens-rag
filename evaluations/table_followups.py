@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pdf-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scenario", choices=("comparison", "summary", "first", "inventory"), default="comparison")
+    parser.add_argument("--scenario", choices=("comparison", "summary", "first", "inventory", "release"), default="comparison")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Choose a new output path; existing reports are preserved")
@@ -37,6 +37,10 @@ def main():
     elif args.scenario == "first":
         history = []
     queries = ("make difference table", "make differnce table of 3 chapters")
+    if args.scenario == "release":
+        history = []
+        queries = ("give difference of chapter 1 and chapter 2 in table form",
+                   "in tabel form", "can you put it in table form")
     if args.scenario == "inventory":
         history = []
         queries = ("give me all differences in notes so that i can learn for exam", "all differences in table form")
@@ -52,7 +56,11 @@ def main():
                       **asdict(answer)}
             results.append(result)
             print(query, answer.finish_reason, f"{result['seconds']:.2f}s", f"table lines={len(lines)}", f"warnings={answer.warning!r}", flush=True)
-            history.extend([{"role": "user", "content": query}, {"role": "assistant", "content": answer.text}])
+            history.extend([{"role": "user", "content": query},
+                            {**asdict(answer), "role": "assistant", "content": answer.text}])
+            if args.scenario == "release" and len(results) > 1:
+                if answer.attempts != 0 or answer.text != results[0]["text"]:
+                    raise AssertionError("Formatting follow-up regenerated or changed the comparison")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
     finally:

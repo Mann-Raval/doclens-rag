@@ -1,6 +1,8 @@
 # Stage 1 retest — 2026-10-09
 
-**Status: deployed test candidate; answer-quality gate still blocks v1.0.**
+**Historical report.** The owner later approved a v1.0 learning-demo release with
+known quality limitations; see the [current release decision](v1-release-2026-10-11.md).
+The failures recorded below are preserved, not retrospectively marked passed.
 
 Latest review: [2026-10-10 release checks](release-checks-2026-10-10.md).
 

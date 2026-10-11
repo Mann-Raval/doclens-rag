@@ -3,13 +3,13 @@ import os
 import re
 from typing import Callable, Sequence
 from langchain_core.documents import Document
-from .config import MAX_HISTORY_MESSAGES, MAX_COMPARISON_CHUNKS
+from .config import MAX_HISTORY_MESSAGES, MAX_COMPARISON_CHUNKS, MAX_SUMMARY_CHUNKS
 from .schemas import RagAnswer
 from .retrieval import PdfIndex, _select_broad_chunks, _evenly_spaced_chunks
 from .ingestion import process_pdf, process_pdfs
 from .generation import _answer_chain, response_details
 from .comparisons import is_comparison_inventory, comparison_passages
-from .source_comparison import compare_sources, requested_source_chunks, render_comparison
+from .source_comparison import compare_sources, requested_source_chunks, render_comparison, synthesis_source_chunks
 
 def answer_question(
     query: str,
@@ -30,14 +30,18 @@ def answer_question(
     effective_query, is_retry = _resolve_question(query, full_history)
     retrieval_query = _build_retrieval_query(effective_query, history)
     question_mode = _question_mode(effective_query)
-    inventory = is_comparison_inventory(effective_query)
-    cross_document = question_mode == "comparison" and _cross_document_comparison(effective_query)
+    cross_document = _cross_document_comparison(effective_query, pdf_index.chunks)
+    if cross_document:
+        question_mode = "comparison"
+    inventory = is_comparison_inventory(effective_query) and not cross_document
     if inventory:
         documents = comparison_passages(pdf_index.chunks)
     elif cross_document:
         documents = _select_broad_chunks(
             requested_source_chunks(pdf_index.chunks, effective_query), MAX_COMPARISON_CHUNKS
         )
+    elif question_mode == "synthesis":
+        documents = _select_broad_chunks(synthesis_source_chunks(pdf_index.chunks, effective_query), MAX_SUMMARY_CHUNKS)
     else:
         documents = pdf_index.retrieve(
             retrieval_query,
@@ -45,7 +49,10 @@ def answer_question(
         )
     if not documents:
         return RagAnswer(
-            text="I don't know based on the provided documents.", pages=(), sources=()
+            text=("I couldn't identify all the requested documents or chapters in the uploaded filenames. "
+                  "Please check the chapter numbers or use the exact filenames."
+                  if cross_document else "I don't know based on the provided documents."),
+            pages=(), sources=()
         )
 
     context = "\n\n".join(f"Evidence [S{i}]\n{_format_document(doc)}" for i, doc in enumerate(documents, 1))
@@ -216,19 +223,33 @@ def _prose_word_count(text: str) -> int:
     return len(re.sub(r"\[[^\]\n]*\]", "", text).split())
 
 
-def _cross_document_comparison(query: str) -> bool:
+def _cross_document_comparison(query: str, chunks=()) -> bool:
+    """Recognize document targets independently of comparison phrasing.
+
+    Named-topic comparisons using PDFs as evidence remain topic searches.
+    Numbered chapters and uploaded filenames are explicit document targets.
+    """
     query = _normalized_question(query)
     if "requested format:" in query:
         subject, formatting = query.split("requested format:", 1)
         collection_scope = re.search(r"\b(?:all|each|uploaded)\b[^.?!]*\b(?:pdfs?|documents?|chapters?)\b|\bcollection\b", subject)
         if _requests_table(formatting) and _question_mode(subject) == "synthesis" and collection_scope:
             return True
+    intent = re.search(r"\b(?:compar\w*|differ\w*|contrast\w*|versus|vs)\b", query)
+    target = re.split(r"\b(?:using|according to|based on|from)\b", query, maxsplit=1)[0]
+    numbered = re.findall(r"\bchapters?\s*[-#]?\s*(\d+)\b", target)
+    sources = {str(doc.metadata.get("source", "")).casefold() for doc in chunks}
+    named = [source for source in sources if source and source in query]
+    if intent and (numbered or len(named) >= 2):
+        return True
     # "Compare TCP and UDP using these PDFs" is a topic comparison.
     qualifiers = r"(?:(?:all|the|these|those|both|uploaded|selected|three|two|\d+)\s+)*"
     objects = r"(?:pdfs?|documents?|chapters?|files?)\b"
-    return bool(re.search(r"\b(?:compar\w*\s+|differences?\s+between\s+)" + qualifiers + objects, query, re.I)
+    relation = r"(?:(?:of|between|among|for)\s+)?"
+    return bool(re.search(r"\b(?:compar\w*|differences?|differentiate|contrast)\s+" + relation + qualifiers + objects, query, re.I)
                 or re.search(r"\bhow\s+do\s+" + qualifiers + objects + r".*\bdiffer\b", query, re.I)
-                or re.search(r"\btable\s+(?:of|for|between|comparing)\s+" + qualifiers + objects, query, re.I))
+                or re.search(r"\btable\s+(?:of|for|between|comparing)\s+" + qualifiers + objects, query, re.I)
+                or re.search(objects + r".*\b(?:vs|versus|compared\s+(?:to|with))\b.*" + objects, query))
 
 
 def _render_evidence_ids(text: str, documents: Sequence[Document]) -> str:
@@ -466,6 +487,12 @@ def _normalized_question(query: str) -> str:
 
 def _is_format_followup(query: str) -> bool:
     normalized = _normalized_question(query).strip(".!? ")
+    normalized = re.sub(r"^(?:can|could|would) you (?:please )?", "", normalized)
+    table_form = r"(?:a |the )?(?:table(?: form| format)?|tabular (?:form|format))"
+    if re.fullmatch(r"(?:please )?(?:give|show|make|present|put|convert|turn|format) "
+                    r"(?:it|this|that|the same|the answer|the comparison) "
+                    r"(?:(?:in|into|as) )?" + table_form + r"(?: please)?", normalized):
+        return True
     if re.fullmatch(r"(?:please )?(?:in|as) (?:a |the )?(?:table(?: form| format)?|tabular form)(?: please)?", normalized):
         return True
     if re.fullmatch(r"(?:please )?(?:a |the )?(?:(?:difference|comparison) )?table(?: form)?(?: please)?", normalized):

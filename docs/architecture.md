@@ -119,3 +119,20 @@ propagate. Formatting-only follow-ups continue to reuse the saved final snapshot
 
 This is a completeness repair, not a semantic entailment check. Unsupported
 features may remain unavailable, and valid-looking claims can still be wrong.
+
+### v1.0 learning release (build 1.3.15)
+
+Comparison routing now recognizes document targets separately from the comparison
+verb/preposition, including numbered pairs, filename pairs, `contrast`, `vs`, and
+`difference of`. Topic comparisons using documents as evidence stay topic-scoped.
+Named-chapter summaries also restrict their source set.
+
+For each source profile, context is divided into bounded exact spans with integer
+sentence IDs under each excerpt ID. The model selects those IDs instead of copying
+quotes. Validation resolves them back to the original text, checks ownership and
+rejects absent acronyms/hyphenated terms. Accepted support spans remain in the
+comparison snapshot. Missing-cell repair receives specific validation feedback.
+
+This does not validate logical relations, source truth, or all paraphrase terms.
+The v1.0 release is explicitly a learning demo with observed interpretation errors
+accepted by the owner; see `evaluations/v1-release-2026-10-11.md`.

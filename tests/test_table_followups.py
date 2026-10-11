@@ -33,13 +33,13 @@ class TableFollowupTests(unittest.TestCase):
 
     def comparison_fixture(self):
         index = PdfIndex.from_documents([
-            Document(page_content=f"Chapter {i} evidence", metadata={"source": f"CHAPTER {i}.pdf", "page": i})
+            Document(page_content=f"Chapter {i} original focus", metadata={"source": f"CHAPTER {i}.pdf", "page": i})
             for i in (1, 2)
         ], backend="lexical")
         chain = Mock()
         chain.invoke.side_effect = [json.dumps([{
             "feature": feature, "summary": f"Chapter {i} original focus",
-            "evidence": [{"id": f"S{i}"}],
+            "evidence": [{"id": f"S{i}", "quote": f"Chapter {i} original focus"}],
         } for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]) for i in (1, 2)]
         with patch.object(pipeline, "_answer_chain", return_value=chain):
             original = pipeline.answer_question("Compare chapter 1 with chapter 2", index)
@@ -98,7 +98,7 @@ class TableFollowupTests(unittest.TestCase):
         history = [{"role": "user", "content": '“Compare chapter 1 with chapter 2” and its table follow-up'},
                    {"role": "assistant", "content": "Earlier answer"}]
         chain = Mock()
-        chain.invoke.side_effect = [json.dumps([{"feature": feature, "summary": f"Chapter {i} evidence", "evidence": [{"id": f"S{i}"}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]) for i in (1, 2)]
+        chain.invoke.side_effect = [json.dumps([{"feature": feature, "summary": f"Chapter {i} evidence", "evidence": [{"id": f"S{i}", "quote": f"Chapter {i} contains its own evidence."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]) for i in (1, 2)]
         with patch.object(pipeline, "_answer_chain", return_value=chain):
             answer = pipeline.answer_question("difference table", index, history)
         self.assertEqual(chain.invoke.call_count, 2)

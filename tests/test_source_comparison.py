@@ -9,6 +9,34 @@ from src.pdf_rag.source_comparison import compare_sources, comparison_cells, req
 
 
 class SourceComparisonTests(unittest.TestCase):
+    def test_sentence_ids_resolve_to_exact_source_spans(self):
+        evidence = {"S1": Document(page_content="Networks connect computers. Ethernet uses frames.")}
+        raw = json.dumps([{"feature": "Main focus", "summary": "Ethernet uses frames",
+                           "evidence": [{"id": "S1", "sentence": 2}]}])
+        cells = comparison_cells(raw, evidence, ("Main focus",), 30, require_support=True)
+        self.assertEqual(cells[0]["evidence"], [{"id": "S1", "quote": "Ethernet uses frames."}])
+        for position in (0, -1, 3, True, "2"):
+            invalid = json.dumps([{"feature": "Main focus", "summary": "Ethernet uses frames",
+                                   "evidence": [{"id": "S1", "sentence": position}]}])
+            self.assertEqual(comparison_cells(invalid, evidence, ("Main focus",), 30, require_support=True), [])
+
+    def test_unsupported_technical_anchor_is_rejected_and_repair_gets_reason(self):
+        evidence = {"S1": Document(page_content="BGP uses path vector routing.")}
+        for summary in ("OSPF uses path vector routing", "BGP uses distance-vector routing"):
+            raw = json.dumps([{"feature": "Main focus", "summary": summary,
+                               "evidence": [{"id": "S1", "sentence": 1}]}])
+            rejected = {}
+            self.assertEqual(comparison_cells(raw, evidence, ("Main focus",), 30,
+                                             require_support=True, rejections=rejected), [])
+            self.assertIn("acronym", rejected["Main focus"])
+
+    def test_multiple_spans_from_same_excerpt_are_preserved(self):
+        evidence = {"S1": Document(page_content="TCP provides transport. UDP provides datagrams.")}
+        raw = json.dumps([{"feature": "Main focus", "summary": "TCP and UDP",
+                           "evidence": [{"id": "S1", "sentence": 1}, {"id": "S1", "sentence": 2}]}])
+        cells = comparison_cells(raw, evidence, ("Main focus",), 30, require_support=True)
+        self.assertEqual(len(cells[0]["evidence"]), 2)
+
     def test_prompt_requires_item_level_support_and_preserves_source_conflicts(self):
         chain = Mock()
         chain.invoke.return_value = "[]"
@@ -58,8 +86,8 @@ class SourceComparisonTests(unittest.TestCase):
     def test_each_call_sees_one_source_and_only_validated_text_streams(self):
         chain = Mock()
         chain.invoke.side_effect = [
-            json.dumps([{"feature": feature, "summary": "Network connectivity", "evidence": [{"id":"S1","quote":"Networks connect computers."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]),
-            json.dumps([{"feature": feature, "summary": "Error detection", "evidence": [{"id":"S2","quote":"Checksums detect errors."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]),
+            json.dumps([{"feature": feature, "summary": "Networks connect computers", "evidence": [{"id":"S1","quote":"Networks connect computers."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]),
+            json.dumps([{"feature": feature, "summary": "Checksums detect errors", "evidence": [{"id":"S2","quote":"Checksums detect errors."}]} for feature in ("Main focus", "Key concepts", "Mechanisms and methods", "Examples")]),
         ]
         updates = []
         text, _, warning, calls, _ = compare_sources(chain, self.docs, self.payload, table=True, on_update=updates.append)
@@ -68,8 +96,8 @@ class SourceComparisonTests(unittest.TestCase):
         self.assertNotIn("Checksums", first["context"])
         self.assertNotIn("Networks", second["context"])
         self.assertEqual(first["history"], "(none)")
-        self.assertIn('Network connectivity [S1]', text)
-        self.assertIn('Error detection [S2]', text)
+        self.assertIn('Networks connect computers [S1]', text)
+        self.assertIn('Checksums detect errors [S2]', text)
         self.assertIn('| Feature | a.pdf | b.pdf |', text)
         self.assertNotIn('“Networks connect computers.”', text)
         self.assertEqual(updates[-1], text)
@@ -108,8 +136,8 @@ class SourceComparisonTests(unittest.TestCase):
         chain.invoke.assert_called_once()
 
     def test_repair_only_fills_missing_cells_and_preserves_valid_cells(self):
-        def cell(feature, summary="Original summary", identity="S1"):
-            return {"feature": feature, "summary": summary, "evidence": [{"id": identity}]}
+        def cell(feature, summary="Networks connect computers", identity="S1"):
+            return {"feature": feature, "summary": summary, "evidence": [{"id": identity, "quote": "Networks connect computers."}]}
         original = cell("Main focus")
         chain = Mock()
         chain.invoke.side_effect = [
@@ -126,12 +154,11 @@ class SourceComparisonTests(unittest.TestCase):
         self.assertIn("source_1_repair", usage)
         first, repair = [call.args[0] for call in chain.invoke.call_args_list]
         self.assertEqual(first["context"], repair["context"])
-        self.assertNotIn('"Main focus"', repair["task_guidance"])
-        self.assertIn('"Key concepts"', repair["task_guidance"])
+        self.assertIn('Use these exact feature labels: ["Key concepts", "Mechanisms and methods", "Examples"]', repair["task_guidance"])
 
     def test_failed_repair_is_bounded_and_retains_valid_cells(self):
-        draft = json.dumps([{"feature": "Main focus", "summary": "Keep this",
-                             "evidence": [{"id": "S1"}]}])
+        draft = json.dumps([{"feature": "Main focus", "summary": "Networks connect computers",
+                             "evidence": [{"id": "S1", "quote": "Networks connect computers."}]}])
         for failure in ("[]", "invalid json", ConnectionError("private provider detail"),
                         AIMessage(content="", response_metadata={"finish_reason": "SAFETY"})):
             with self.subTest(failure=type(failure).__name__):
@@ -140,7 +167,7 @@ class SourceComparisonTests(unittest.TestCase):
                 text, _, warning, calls, _ = compare_sources(chain, self.docs[:1], self.payload)
                 self.assertEqual(calls, 2)
                 self.assertEqual(chain.invoke.call_count, 2)
-                self.assertIn("Keep this [S1]", text)
+                self.assertIn("Networks connect computers [S1]", text)
                 self.assertIn("Summary unavailable", text)
                 self.assertIn("Key concepts", warning)
                 self.assertNotIn("private provider detail", warning)

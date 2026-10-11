@@ -5,8 +5,8 @@ Current user-confirmed test deployment: https://doclens-rag.streamlit.app/
 Community Cloud hosts the Streamlit application. Chroma runs inside that app;
 Community Cloud is not a managed vector database or durable document library.
 
-1. Select repository `Mann-Raval/doclens-rag` and the tested feature branch
-   `feat/basic-rag-foundation` (or main after merging).
+1. Select repository `Mann-Raval/doclens-rag` and `main` for the v1.0 learning
+   demo. Use `feat/basic-rag-foundation` only for feature-branch testing.
 2. Set entry point `app.py` and Python 3.12.
 3. Add top-level secrets in the app's Advanced settings:
 
@@ -59,5 +59,13 @@ Record deployment URL, commit, Python version, upload sizes/page counts, and:
 - Observe process RSS before/after upload, two active sessions, and removal.
   Memory may be retained by Python/ONNX allocators even after collection deletion.
 
-Do not merge/tag `v1.0` until answer-quality review and these deployed checks
-are recorded. The feature branch can be deployed as a release candidate first.
+The owner approved v1.0 as a learning demo with remaining quality and Cloud-test
+limitations documented in `evaluations/v1-release-2026-10-11.md`. The checklist
+above remains necessary for a stronger production-readiness claim. It has not
+been silently marked passed by publishing the educational milestone.
+
+If the existing app still tracks `feat/basic-rag-foundation`, it receives the
+release build when that branch is pushed. Configure the deployment to track
+`main` for future stable releases; hosting settings are managed separately from
+the GitHub release. Confirm the sidebar shows build 1.3.15 and v1.0, then smoke-test
+uploads and a comparison. No automated Cloud sign-off is claimed.
