@@ -76,9 +76,8 @@ two rows. Cells contain concise paraphrases and evidence IDs, not pasted quotes.
 
 The application validates schema, word bounds, feature labels, and ownership of
 every cited ID before rendering columns per document and rows per feature. IDs
-from another file are rejected. A missing cell says its content was not established
-by retrieved evidence; this is not a claim that the PDF lacks the topic. Formatting
-follow-ups retain source scope. Output is published after the source calls finish;
+from another file are rejected. A missing cell reports that a summary is unavailable,
+not that the document lacks evidence. Output is published after the source calls finish;
 unvalidated intermediate JSON is never streamed into the answer.
 
 An experimental second LLM review rejected useful content, was inconsistent,
@@ -87,3 +86,17 @@ NOT semantic entailment or factual truth. Generated paraphrases can still be
 incorrect or incompletely supported, and source notes may themselves be wrong.
 The quote-dump fallback from 1.3.8/1.3.9 has been removed. Other question routes
 retain their existing behaviour and limitations.
+
+### Stable table follow-ups (build 1.3.11)
+
+Structured comparison cells and their original evidence are stored in the assistant
+message, bound to the session-owned index's unique ID. A formatting-only follow-up
+such as `make difference table` re-renders the immediately preceding comparison.
+It performs no retrieval or model call, preserving summaries, source scope, and
+citations. Repeated table requests reuse the same snapshot. New substantive
+questions and explicit retries generate fresh answers. Old chat messages without
+structured metadata use the normal generation path.
+
+Clear chat discards snapshots; replacing/removing uploads resets history. A snapshot
+from a different index cannot be reused, even if filenames and contents match.
+This fixes formatting consistency, not the factual accuracy of the original cells.

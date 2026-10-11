@@ -1,5 +1,6 @@
 import unittest
 import json
+from dataclasses import asdict
 from unittest.mock import Mock, patch
 from langchain_core.documents import Document
 from src.pdf_rag import pipeline
@@ -7,6 +8,54 @@ from src.pdf_rag.retrieval import PdfIndex
 
 
 class TableFollowupTests(unittest.TestCase):
+    def comparison_fixture(self):
+        index = PdfIndex.from_documents([
+            Document(page_content=f"Chapter {i} evidence", metadata={"source": f"CHAPTER {i}.pdf", "page": i})
+            for i in (1, 2)
+        ], backend="lexical")
+        chain = Mock()
+        chain.invoke.side_effect = [json.dumps([{
+            "feature": "Main focus", "summary": f"Chapter {i} original focus",
+            "evidence": [{"id": f"S{i}"}],
+        }]) for i in (1, 2)]
+        with patch.object(pipeline, "_answer_chain", return_value=chain):
+            original = pipeline.answer_question("Compare chapter 1 with chapter 2", index)
+        message = {**asdict(original), "role": "assistant", "content": original.text}
+        history = [{"role": "user", "content": "Compare chapter 1 with chapter 2"}, message]
+        return index, original, history
+
+    def test_format_followup_preserves_cells_and_evidence_without_model_or_retrieval(self):
+        index, original, history = self.comparison_fixture()
+        updates = []
+        with patch.object(pipeline, "_answer_chain", side_effect=AssertionError("No model call")), \
+                patch.object(index, "retrieve", side_effect=AssertionError("No retrieval")):
+            table = pipeline.answer_question("make difference table", index, history, on_update=updates.append)
+            history.extend([{"role": "user", "content": "make difference table"},
+                            {**asdict(table), "role": "assistant", "content": table.text}])
+            repeated = pipeline.answer_question("table please", index, history)
+        for i in (1, 2):
+            self.assertIn(f"Chapter {i} original focus [CHAPTER {i}.pdf, Page {i + 1}]", table.text)
+        self.assertEqual(table.evidence, original.evidence)
+        self.assertEqual(table.sources, original.sources)
+        self.assertEqual(table.comparison, original.comparison)
+        self.assertEqual(table.attempts, 0)
+        self.assertEqual(updates, [table.text])
+        self.assertEqual(repeated.text, table.text)
+
+    def test_comparison_snapshot_cannot_cross_sessions_or_replaced_uploads(self):
+        index, _, history = self.comparison_fixture()
+        replacement = PdfIndex.from_documents(index.chunks, backend="lexical")
+        self.assertIsNone(pipeline._reformat_comparison("table", replacement, history))
+        self.assertIsNone(pipeline._reformat_comparison("table", index, []))
+
+    def test_new_topic_retry_and_intervening_answer_do_not_reuse_comparison(self):
+        index, _, history = self.comparison_fixture()
+        for query in ("try again", "Compare chapter 1 with chapter 3", "Compare TCP and UDP in a table"):
+            self.assertIsNone(pipeline._reformat_comparison(query, index, history))
+        history.extend([{"role": "user", "content": "Explain TCP"},
+                        {"role": "assistant", "content": "TCP answer"}])
+        self.assertIsNone(pipeline._reformat_comparison("table", index, history))
+
     def test_bare_table_requests_keep_chapter_scope(self):
         history = [{"role": "user", "content": '“Compare chapter 1 with chapter 2” and its table follow-up'}]
         for followup in ("difference table", "comparison table", "table", "table form", "the table please"):

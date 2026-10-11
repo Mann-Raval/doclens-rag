@@ -9,7 +9,7 @@ from .retrieval import PdfIndex, _select_broad_chunks, _evenly_spaced_chunks
 from .ingestion import process_pdf, process_pdfs
 from .generation import _answer_chain, response_details
 from .comparisons import is_comparison_inventory, comparison_passages
-from .source_comparison import compare_sources, requested_source_chunks
+from .source_comparison import compare_sources, requested_source_chunks, render_comparison
 
 def answer_question(
     query: str,
@@ -20,6 +20,11 @@ def answer_question(
 ) -> RagAnswer:
     """Retrieve supporting passages and generate a cited answer."""
     full_history = list(chat_history or [])
+    reused = _reformat_comparison(query, pdf_index, full_history)
+    if reused is not None:
+        if on_update:
+            on_update(reused.text)
+        return reused
     history = full_history[-MAX_HISTORY_MESSAGES:]
     history_text = _format_history(history)
     effective_query, is_retry = _resolve_question(query, full_history)
@@ -104,12 +109,14 @@ def answer_question(
     stream_update = (lambda text: on_update(_render_evidence_ids(text, documents))) if on_update else None
     scoped_comparison = cross_document and not inventory and len({doc.metadata.get("source") for doc in documents}) > 1
     comparison_warning = ""
+    comparison = {}
     if scoped_comparison:
-        text, usage, comparison_warning, attempts = compare_sources(
+        text, usage, comparison_warning, attempts, comparison = compare_sources(
             chain, documents, payload, table=_requests_table(effective_query),
             word_limit=word_limit, on_update=stream_update,
         )
         reason = "STOP"
+        comparison["session_id"] = pdf_index.session_id
     else:
         response = _generate(chain, payload, stream_update)
         text, reason, usage = response_details(response)
@@ -156,7 +163,36 @@ def answer_question(
     } for doc in documents)
     return RagAnswer(text=text, pages=pages, sources=sources,
                      finish_reason=reason, usage=usage, warning=warning,
-                     attempts=attempts, evidence=evidence)
+                     attempts=attempts, evidence=evidence, comparison=comparison)
+
+
+def _reformat_comparison(query, pdf_index, history):
+    """Render the immediately preceding structured answer, never regenerate it.
+
+    A new topic, retry, old message without metadata, or replaced index cannot
+    reuse this snapshot. The snapshot stays in this session's chat history.
+    """
+    if not _is_format_followup(query) or not history:
+        return None
+    previous = history[-1]
+    snapshot = previous.get("comparison")
+    if (previous.get("role") != "assistant" or not snapshot
+            or snapshot.get("session_id") != pdf_index.session_id):
+        return None
+    evidence = tuple(previous.get("evidence", ()))
+    if not evidence:
+        return None
+    documents = [Document(page_content=item["text"], metadata={
+        "source": item["source"], "page": item["page"] - 1,
+    }) for item in evidence]
+    text = render_comparison(snapshot["cards"], snapshot["features"], table=True)
+    text = _render_evidence_ids(text, documents)
+    return RagAnswer(
+        text=text, pages=tuple(previous.get("pages", ())),
+        sources=tuple(previous.get("sources", ())), evidence=evidence,
+        warning=previous.get("warning", ""), finish_reason="STOP", attempts=0,
+        usage={"reused_comparison": True}, comparison=snapshot,
+    )
 
 
 def _generate(chain, payload, on_update):

@@ -42,7 +42,7 @@ class SourceComparisonTests(unittest.TestCase):
             json.dumps([{"feature": "Main focus", "summary": "Error detection", "evidence": [{"id":"S2","quote":"Checksums detect errors."}]}]),
         ]
         updates = []
-        text, _, warning, calls = compare_sources(chain, self.docs, self.payload, table=True, on_update=updates.append)
+        text, _, warning, calls, _ = compare_sources(chain, self.docs, self.payload, table=True, on_update=updates.append)
         self.assertEqual(calls, 2)
         first, second = [call.args[0] for call in chain.invoke.call_args_list]
         self.assertNotIn("Checksums", first["context"])
@@ -58,9 +58,9 @@ class SourceComparisonTests(unittest.TestCase):
     def test_no_valid_quotes_does_not_render_fabricated_answer(self):
         chain = Mock()
         chain.invoke.return_value = '[{"id":"S1","quote":"Both PDFs explain checksums."}]'
-        text, _, warning, _ = compare_sources(chain, self.docs, self.payload)
+        text, _, warning, _, _ = compare_sources(chain, self.docs, self.payload)
         self.assertNotIn("Both PDFs explain", text)
-        self.assertIn("No supported", warning)
+        self.assertIn("Could not generate valid", warning)
 
     def test_word_budget_and_duplicate_quotes(self):
         row = {"id": "S1", "quote": "Networks connect computers."}
@@ -75,9 +75,9 @@ class SourceComparisonTests(unittest.TestCase):
         chain = Mock()
         cell = {"feature": "Main focus", "summary": "Both files guarantee reliability", "evidence": [{"id": "S99"}]}
         chain.invoke.return_value = json.dumps([cell])
-        text, _, warning, _ = compare_sources(chain, self.docs[:1], self.payload, table=True)
+        text, _, warning, _, _ = compare_sources(chain, self.docs[:1], self.payload, table=True)
         self.assertNotIn("guarantee reliability", text)
-        self.assertIn("Not established", text)
+        self.assertIn("Summary unavailable", text)
         self.assertTrue(warning)
 
     def test_provider_block_is_not_reported_as_success_or_retried(self):

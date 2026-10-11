@@ -6,6 +6,8 @@ from html import escape
 
 from .generation import response_details
 
+MISSING_CELL = "Summary unavailable for this feature; check the source excerpts."
+
 
 def requested_source_chunks(chunks, query):
     """Respect explicit filenames or chapter numbers in document comparisons."""
@@ -74,7 +76,7 @@ def compare_sources(chain, documents, payload, *, table=False, word_limit=None, 
     if word_limit and word_limit <= 200:
         features = features[:2]
     empty_layout = render_comparison({source: {} for source in groups}, features, table)
-    reserved_words = len(empty_layout.replace("Not established by retrieved evidence.", "").split())
+    reserved_words = len(empty_layout.replace(MISSING_CELL, "").split())
     cell_words = min(40, max(6, ((word_limit or 500) - reserved_words) // max(1, len(groups) * len(features))))
     target_words = min(24, cell_words)
     cards, usage, warnings = {}, {}, []
@@ -109,11 +111,11 @@ def compare_sources(chain, documents, payload, *, table=False, word_limit=None, 
         candidates = comparison_cells(raw, evidence, features, cell_words)
         cards[source] = {cell["feature"]: cell for cell in candidates}
         if not cards[source]:
-            warnings.append(f"No supported comparison cells for {source}.")
+            warnings.append(f"Could not generate valid comparison cells for {source}; check the source excerpts.")
     text = render_comparison(cards, features, table)
     if on_update:
         on_update(text)
-    return text, usage, " ".join(warnings), calls
+    return text, usage, " ".join(warnings), calls, {"cards": cards, "features": features}
 
 
 def _json_list(raw):
@@ -158,7 +160,7 @@ def render_comparison(cards, features, table):
     def cell_text(source, feature):
         cell = cards[source].get(feature)
         if cell is None:
-            return "Not established by retrieved evidence."
+            return MISSING_CELL
         references = dict.fromkeys(item["id"] for item in cell["evidence"])
         return markdown_text(cell["summary"]) + " " + " ".join(f"[{identity}]" for identity in references)
     if table:

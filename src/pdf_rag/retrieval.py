@@ -5,7 +5,7 @@ import uuid
 import weakref
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 from typing import Callable, Sequence
 
@@ -28,6 +28,7 @@ class PdfIndex:
     vectors: list[dict[str, float]]
     collection: object = None
     _cleanup: object = None
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @classmethod
     def from_documents(
